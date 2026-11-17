@@ -11,3 +11,4 @@ Rust/egui-лаунчер Minecraft + статический сайт `site/`. Р
 7. **Выпуск версии** — если менялся код лаунчера (`src/`), агент САМ выпускает новую версию, не спрашивая: поднять patch в `Cargo.toml` (0.7.1 → 0.7.2), `bash scripts/make-dist.sh` (пишет `site/version.json` и установщик), commit + push в `main` — у пользователей при запуске появится «Обновиться». Только сайт/документы — версию не поднимать.
 5. Секреты (`.env`, токены, ключи) не читать и не коммитить. Папку проекта и `%APPDATA%\Sad Launcher` не удалять.
 6. Запускать собранный лаунчер только с `MADRID_SECOND_INSTANCE=1`.
+8. **Сайт на хостинге** — Botkeep отдаёт сайт из ДРУГОГО репозитория: `simsislam89-crypto/erootstars` (`D:\working WIN\eroot-store\launcher_site`). После правок `site/` скопировать файлы туда (кроме `download/*.exe`), прогнать `pytest tests/test_launcher_host.py`, commit + push в его `main`. Лимит панели: файл ≤ 4 МБ, всё ≤ 20 МБ.
