@@ -189,15 +189,13 @@ pub fn installed(cfg: &Config) -> Vec<InstalledMod> {
         return out;
     };
     for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() {
+        // On Windows the listing already carries type and size: no extra
+        // stat per jar (was two: `is_file` + `metadata`).
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
             continue;
         }
-        let file = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("")
-            .to_string();
+        let Ok(file) = entry.file_name().into_string() else { continue };
         let enabled = file.ends_with(".jar");
         if !enabled && !file.ends_with(".jar.disabled") {
             continue;
@@ -206,15 +204,14 @@ pub fn installed(cfg: &Config) -> Vec<InstalledMod> {
             .trim_end_matches(".disabled")
             .trim_end_matches(".jar")
             .to_string();
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
         out.push(InstalledMod {
             name,
             file,
-            size,
+            size: meta.len(),
             enabled,
         });
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_cached_key(|m| m.name.to_lowercase());
     out
 }
 
@@ -492,7 +489,9 @@ async fn curse_search(
                 .map(|l| if l.thumbnail_url.is_empty() { l.url } else { l.thumbnail_url });
             let tags = m
                 .latest_files_indexes
-                .first()
+                .iter()
+                .find(|f| f.game_version == spec.mc && cf_loader_name(f.mod_loader) == spec.loader.label())
+                .or_else(|| m.latest_files_indexes.first())
                 .map(|f| {
                     let loader = cf_loader_name(f.mod_loader);
                     if loader.is_empty() {
@@ -614,18 +613,30 @@ async fn modrinth_search(
         .hits
         .into_iter()
         .map(|h| {
-            let loader = h
+            // The badge names what fits the active build when the project
+            // supports it (results are filtered by it): «1.20.1 · Forge»,
+            // not the project's newest «26.3 · Fabric».
+            let loaders: Vec<Loader> = h
                 .categories
                 .iter()
                 .map(|c| Loader::parse(c))
-                .find(|l| *l != Loader::Vanilla);
-            let newest = h
-                .versions
-                .iter()
-                .rev()
-                .find(|v| v.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && !v.contains('w'))
-                .cloned()
-                .unwrap_or_default();
+                .filter(|l| *l != Loader::Vanilla)
+                .collect();
+            let loader = if loaders.contains(&spec.loader) {
+                Some(spec.loader)
+            } else {
+                loaders.first().copied()
+            };
+            let newest = if h.versions.iter().any(|v| *v == spec.mc) {
+                spec.mc.clone()
+            } else {
+                h.versions
+                    .iter()
+                    .rev()
+                    .find(|v| v.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) && !v.contains('w'))
+                    .cloned()
+                    .unwrap_or_default()
+            };
             let tags = match loader {
                 Some(l) if !newest.is_empty() => format!("{newest} · {}", l.label()),
                 Some(l) => l.label().to_string(),

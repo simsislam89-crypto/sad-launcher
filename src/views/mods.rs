@@ -1023,7 +1023,7 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                                         let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
                                         ui.painter().rect_filled(r, CornerRadius::same(10), skin.fill());
                                         if ui.is_rect_visible(r) {
-                                            if let Some(tex) = app.remote_image(&ctx, url, 640) {
+                                            if let Some(tex) = app.remote_image(&ctx, url, 480) {
                                                 let fade = ui.ctx().animate_bool_with_time(resp.id.with("f"), true, 0.3);
                                                 ui.painter().image(
                                                     tex.id(),

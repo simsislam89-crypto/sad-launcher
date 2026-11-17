@@ -363,13 +363,15 @@ pub fn delete_all_builds(cfg: &mut Config) -> Result<Sweep> {
 
 /// Mod listings keyed by folder mtime: adding, removing or renaming a file
 /// bumps it, so the cache is exact while the UI redraws freely.
-type ModsCache = HashMap<PathBuf, (SystemTime, Vec<ProfileMod>)>;
+/// Shared (`Arc`), not cloned: the Play/Build/Server tabs ask every frame,
+/// often only for `.len()` of a few hundred jars.
+type ModsCache = HashMap<PathBuf, (SystemTime, std::sync::Arc<Vec<ProfileMod>>)>;
 static MODS_CACHE: Mutex<Option<ModsCache>> = Mutex::new(None);
 
-pub fn list_profile_mods(cfg: &Config, profile_id: &str) -> Vec<ProfileMod> {
+pub fn list_profile_mods(cfg: &Config, profile_id: &str) -> std::sync::Arc<Vec<ProfileMod>> {
     let dir = profile_mods_dir(cfg, profile_id);
     let Some(mtime) = std::fs::metadata(&dir).and_then(|m| m.modified()).ok() else {
-        return Vec::new();
+        return Default::default();
     };
     if let Ok(guard) = MODS_CACHE.lock() {
         if let Some((at, list)) = guard.as_ref().and_then(|m| m.get(&dir)) {
@@ -398,7 +400,8 @@ pub fn list_profile_mods(cfg: &Config, profile_id: &str) -> Vec<ProfileMod> {
             });
         }
     }
-    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out.sort_by_cached_key(|m| m.name.to_lowercase());
+    let out = std::sync::Arc::new(out);
     if let Ok(mut guard) = MODS_CACHE.lock() {
         guard
             .get_or_insert_with(HashMap::new)

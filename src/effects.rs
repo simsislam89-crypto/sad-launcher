@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EffectsConfig {
     // Освещение и видимость в жидкостях
@@ -229,13 +229,17 @@ pub fn is_effect_mod_installed(effect_id: &str, mods_cache: &[InstalledMod]) -> 
     let Some(spec) = effect_mod_spec(effect_id) else {
         return false;
     };
-    mods_cache.iter().any(|m| {
-        if !m.enabled {
-            return false;
-        }
-        let lower = m.name.to_lowercase();
-        spec.patterns.iter().any(|p| lower.contains(p))
-    })
+    // Runs for every effect row on every frame: no lowercase copies.
+    mods_cache
+        .iter()
+        .any(|m| m.enabled && spec.patterns.iter().any(|p| contains_ignore_ascii_case(&m.name, p)))
+}
+
+/// `hay.to_lowercase().contains(needle)` for an ASCII-lowercase needle,
+/// without allocating.
+fn contains_ignore_ascii_case(hay: &str, needle: &str) -> bool {
+    let (h, n) = (hay.as_bytes(), needle.as_bytes());
+    n.is_empty() || h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
 }
 
 pub fn missing_mod_targets(
@@ -278,7 +282,7 @@ pub fn inspect_instance_applied(instance: &Path, cfg: &EffectsConfig) -> Applied
     let options_path = instance.join("options.txt");
     let existing = std::fs::read_to_string(&options_path).unwrap_or_default();
     let patched = patch_options_text(&existing, cfg);
-    let options_ok = options_path.exists() && patched == existing;
+    let options_ok = patched == existing;
     AppliedState { options_ok, pack_ok }
 }
 
@@ -665,7 +669,9 @@ pub fn apply_to_instance(instance: &Path, mc_version: &str, cfg: &EffectsConfig)
     let options_path = instance.join("options.txt");
     let existing = std::fs::read_to_string(&options_path).unwrap_or_default();
     let updated = patch_options_text(&existing, cfg);
-    let options_updated = updated != existing || !options_path.exists();
+    // Nothing to change → nothing written (an empty options.txt used to be
+    // created in every build without one).
+    let options_updated = updated != existing;
     if options_updated {
         std::fs::write(&options_path, updated).context("Не обновить options.txt")?;
     }

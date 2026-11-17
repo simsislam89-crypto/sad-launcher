@@ -620,7 +620,11 @@ pub struct Launcher {
     icon_rx: Receiver<(String, Option<egui::ColorImage>)>,
     pub mods_cache: Vec<crate::mods::InstalledMod>,
     pub mods_at: Instant,
-    pub storage_bytes: u64,
+    mods_stamp: Option<(PathBuf, Option<std::time::SystemTime>)>,
+    mods_full_at: Instant,
+    /// Last measured data-folder size; filled by a background walk.
+    pub storage_bytes: Arc<std::sync::atomic::AtomicU64>,
+    storage_busy: Arc<AtomicBool>,
     pub storage_at: Instant,
     pub lan_ip: Option<String>,
     pub build: Vec<BuildEntry>,
@@ -650,6 +654,13 @@ pub struct Launcher {
     pub focus_search: bool,
     pub effects: crate::effects::EffectsConfig,
     pub effects_status: Option<(bool, String)>,
+    /// Effects changed but not yet written to effects.json (slider drag).
+    pub effects_dirty: bool,
+    /// Settings changed but config.json not yet written (slider drag).
+    pub cfg_dirty: bool,
+    /// options.txt / SadEffects.zip check for the Effects tab: re-read at
+    /// most once a second or when the settings change, not every frame.
+    effects_applied: Option<(PathBuf, crate::effects::EffectsConfig, Instant, crate::effects::AppliedState)>,
     pub effects_mod_task: Option<EffectsModTask>,
     pub automation: crate::automation::AutomationHandle,
     pub auto_snap: crate::automation::AutomationSnapshot,
@@ -727,6 +738,9 @@ async fn load_image(url: String, max_side: u32) -> Option<egui::ColorImage> {
             return tokio::task::spawn_blocking(move || decode_image(&b, max_side)).await.ok().flatten();
         }
     }
+    // Only the network part waits for a slot: icons already on disk never
+    // queue behind slow downloads.
+    let _permit = image_permits().acquire_owned().await;
     let resp = net::client()
         .get(&url)
         .timeout(Duration::from_secs(20))
@@ -735,7 +749,8 @@ async fn load_image(url: String, max_side: u32) -> Option<egui::ColorImage> {
         .ok()?
         .error_for_status()
         .ok()?;
-    let bytes = resp.bytes().await.ok()?.to_vec();
+    // Bytes → Vec without a copy when the buffer is not shared.
+    let bytes: Vec<u8> = resp.bytes().await.ok()?.into();
     tokio::task::spawn_blocking(move || {
         let img = decode_image(&bytes, max_side)?;
         // The disk keeps what is shown, not the original: a 1–2 MB banner
@@ -772,30 +787,63 @@ fn encode_png(img: &egui::ColorImage) -> Option<Vec<u8>> {
 
 fn image_permits() -> Arc<tokio::sync::Semaphore> {
     static SEM: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-    SEM.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(10))).clone()
+    // Icons come from two CDNs (Modrinth over HTTP/2, forgecdn): 16 in
+    // flight hides their latency; decoding runs on the blocking pool.
+    SEM.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(16))).clone()
 }
 
 impl Launcher {
     /// Refreshes cheap caches at most once a second.
     fn refresh_caches(&mut self) {
-        if self.mods_at.elapsed() >= Duration::from_secs(1) {
-            self.mods_cache = mods::installed(&self.cfg);
-            self.mods_at = Instant::now();
+        if self.mods_at.elapsed() < Duration::from_secs(1) {
+            return;
         }
+        self.mods_at = Instant::now();
+        // A folder's mtime changes when a jar is added, removed or renamed
+        // (enable/disable), so an unchanged stamp means an unchanged list —
+        // one stat instead of re-listing hundreds of jars every second.
+        // Every 30 s the list is re-read anyway (a jar overwritten in place).
+        let dir = self.cfg.mods_dir();
+        let stamp = std::fs::metadata(&dir).and_then(|m| m.modified()).ok();
+        let fresh = self.mods_full_at.elapsed() < Duration::from_secs(30)
+            && self
+                .mods_stamp
+                .as_ref()
+                .map(|(d, t)| *d == dir && *t == stamp)
+                .unwrap_or(false);
+        if fresh {
+            return;
+        }
+        self.mods_cache = mods::installed(&self.cfg);
+        self.mods_stamp = Some((dir, stamp));
+        self.mods_full_at = Instant::now();
     }
 
     /// Forces the installed-mods list to re-read on the next frame.
     pub fn touch_mods(&mut self) {
         self.mods_at = Instant::now() - Duration::from_secs(3);
+        self.mods_stamp = None;
     }
 
     /// Heavy storage walk for the settings tab, at most once per 4 seconds.
+    /// The walk over game/, assets and every build is thousands of files:
+    /// it runs on a blocking worker, the UI shows the last number meanwhile.
     pub fn storage_size(&mut self) -> u64 {
-        if self.storage_at.elapsed() >= Duration::from_secs(4) {
-            self.storage_bytes = crate::util::dir_size(&config::data_dir());
+        if self.storage_at.elapsed() >= Duration::from_secs(4) && !self.storage_busy.swap(true, Ordering::SeqCst) {
             self.storage_at = Instant::now();
+            let out = self.storage_bytes.clone();
+            let busy = self.storage_busy.clone();
+            let ctx = self.ctx.clone();
+            net::rt().spawn_blocking(move || {
+                let size = crate::util::dir_size(&config::data_dir());
+                let changed = out.swap(size, Ordering::Relaxed) != size;
+                busy.store(false, Ordering::SeqCst);
+                if let (true, Some(ctx)) = (changed, ctx) {
+                    ctx.request_repaint();
+                }
+            });
         }
-        self.storage_bytes
+        self.storage_bytes.load(Ordering::Relaxed)
     }
 
     /// Real skin face as a texture, loaded from the chosen skin png.
@@ -869,7 +917,6 @@ impl Launcher {
         let ctx = ctx.clone();
         let url = url.to_string();
         net::spawn(async move {
-            let _permit = image_permits().acquire_owned().await;
             let img = load_image(url.clone(), max_side).await;
             let _ = tx.send((url, img));
             ctx.request_repaint();
@@ -1138,7 +1185,10 @@ impl Launcher {
             icon_rx,
             mods_cache: Vec::new(),
             mods_at: Instant::now() - Duration::from_secs(3),
-            storage_bytes: 0,
+            mods_stamp: None,
+            mods_full_at: Instant::now(),
+            storage_bytes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            storage_busy: Arc::new(AtomicBool::new(false)),
             storage_at: Instant::now() - Duration::from_secs(5),
             lan_ip: server::local_ip(),
             build: mods::load_build(),
@@ -1166,6 +1216,9 @@ impl Launcher {
             focus_search: false,
             effects: initial_effects,
             effects_status: None,
+            effects_applied: None,
+            effects_dirty: false,
+            cfg_dirty: false,
             effects_mod_task: None,
             automation,
             auto_snap,
@@ -1195,6 +1248,11 @@ impl Launcher {
             was_focused: true,
             last_trim: Instant::now(),
         };
+        // Developer screenshots: MADRID_DEV_ZOOM=2 renders everything at 2×
+        // (main.rs grows the window to match).
+        if let Some(z) = std::env::var("MADRID_DEV_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()) {
+            ctx.set_zoom_factor(z.clamp(0.5, 3.0));
+        }
         // Developer preview: MADRID_DEV_ABOUT=1 opens «О лаунчере».
         if std::env::var_os("MADRID_DEV_ABOUT").is_some() {
             app.about_at = Some(Instant::now());
@@ -1560,6 +1618,21 @@ impl Launcher {
             self.apply_search(r.offset, &r.source, r.result);
             if ok {
                 self.prefetch_next(ctx);
+                // With the catalog on screen, icons of the next rows start
+                // loading now, not when each card scrolls into view. Not on
+                // other tabs: the start-up search must not cost RAM/CPU.
+                let on_catalog = self.tab == Tab::Mods;
+                let urls: Vec<String> = self
+                    .search
+                    .results
+                    .iter()
+                    .skip(r.offset)
+                    .take(if on_catalog { 25 } else { 0 })
+                    .filter_map(|h| h.icon_url.clone())
+                    .collect();
+                for url in urls {
+                    let _ = self.mod_icon(ctx, &url);
+                }
             }
         }
         if self.search.cache.len() > 120 {
@@ -1625,7 +1698,21 @@ impl Launcher {
         }
     }
 
+    /// Cached [`crate::effects::inspect_instance_applied`] for the active build.
+    pub fn effects_applied_state(&mut self) -> crate::effects::AppliedState {
+        let instance = self.cfg.instance_dir();
+        if let Some((dir, cfg, at, state)) = &self.effects_applied {
+            if *dir == instance && *cfg == self.effects && at.elapsed() < Duration::from_secs(1) {
+                return *state;
+            }
+        }
+        let state = crate::effects::inspect_instance_applied(&instance, &self.effects);
+        self.effects_applied = Some((instance, self.effects.clone(), Instant::now(), state));
+        state
+    }
+
     pub fn apply_effects_now(&mut self, notify: bool) {
+        self.effects_applied = None;
         let instance = self.cfg.instance_dir();
         let spec = self.active_spec();
         let mc_running = self.auto_snap.mc_running || self.shared.is_game_running();
@@ -2949,6 +3036,13 @@ impl Launcher {
                     {
                         self.about_at = Some(Instant::now());
                     }
+                    if !config::SITE_URL.is_empty()
+                        && widgets::button_sized(ui, skin, "Сайт", widgets::Btn::Ghost, true, 24.0, 11.0, 9.0)
+                            .on_hover_text(config::SITE_URL)
+                            .clicked()
+                    {
+                        let _ = open::that_detached(config::SITE_URL);
+                    }
                 },
             );
             ui.add_space(10.0);
@@ -3997,6 +4091,12 @@ impl Launcher {
 
 impl eframe::App for Launcher {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if self.effects_dirty {
+            crate::effects::save(&self.effects);
+        }
+        if self.cfg_dirty && crate::util::nickname_valid(&self.cfg.nickname) {
+            self.save_cfg();
+        }
         self.shutdown_online();
     }
 
@@ -4006,6 +4106,99 @@ impl eframe::App for Launcher {
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        let bench_at = bench::frame_start(&ctx);
+        self.ui_frame(ui, &ctx);
+        bench::frame_end(&ctx, bench_at);
+        bench::screenshot(&ctx);
+    }
+}
+
+/// Developer benchmark: `MADRID_BENCH=<seconds>` repaints every frame for
+/// that long, then writes «frames ui_ms_avg» to `MADRID_BENCH_OUT` and
+/// closes. Lets per-frame cost be compared before/after a change.
+mod bench {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    static FRAMES: AtomicU64 = AtomicU64::new(0);
+    static UI_NANOS: AtomicU64 = AtomicU64::new(0);
+
+    fn config() -> Option<&'static (Duration, Instant)> {
+        static CFG: OnceLock<Option<(Duration, Instant)>> = OnceLock::new();
+        CFG.get_or_init(|| {
+            let secs: f32 = std::env::var("MADRID_BENCH").ok()?.parse().ok()?;
+            Some((Duration::from_secs_f32(secs.clamp(1.0, 120.0)), Instant::now()))
+        })
+        .as_ref()
+    }
+
+    pub fn frame_start(ctx: &egui::Context) -> Option<Instant> {
+        config()?;
+        ctx.request_repaint();
+        Some(Instant::now())
+    }
+
+    /// `MADRID_DEV_SHOT=<file.png>`: after `MADRID_DEV_SHOT_DELAY` seconds
+    /// (default 8) saves the window as rendered (alpha kept) and closes.
+    /// With `MADRID_DEV_ZOOM=2` that is a crisp 2× shot for the website.
+    pub fn screenshot(ctx: &egui::Context) {
+        static STARTED: OnceLock<Option<(String, Instant, f32)>> = OnceLock::new();
+        static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let Some((path, started, delay)) = STARTED
+            .get_or_init(|| {
+                let path = std::env::var("MADRID_DEV_SHOT").ok()?;
+                let delay = std::env::var("MADRID_DEV_SHOT_DELAY").ok().and_then(|d| d.parse().ok()).unwrap_or(8.0);
+                Some((path, Instant::now(), delay))
+            })
+            .as_ref()
+        else {
+            return;
+        };
+        // Continuous frames until the shot is taken (an idle, unfocused
+        // window may otherwise not paint the frame the request rides on).
+        ctx.request_repaint();
+        if started.elapsed().as_secs_f32() >= *delay && !ASKED.swap(true, Ordering::SeqCst) {
+            let path = path.clone();
+            let ctx2 = ctx.clone();
+            ctx.request_screenshot(move |img| {
+                let [w, h] = img.size;
+                let raw: Vec<u8> = img.pixels.iter().flat_map(|p| p.to_srgba_unmultiplied()).collect();
+                if let Some(buf) = image::RgbaImage::from_raw(w as u32, h as u32, raw) {
+                    if let Err(e) = buf.save(&path) {
+                        let _ = std::fs::write(format!("{path}.err"), e.to_string());
+                    }
+                }
+                ctx2.send_viewport_cmd(egui::ViewportCommand::Close);
+                ctx2.request_repaint();
+            });
+        }
+    }
+
+    pub fn frame_end(ctx: &egui::Context, at: Option<Instant>) {
+        let (Some(at), Some((span, started))) = (at, config()) else {
+            return;
+        };
+        // The first 3 s settle start-up work (fonts, caches) out of the number.
+        if started.elapsed() < Duration::from_secs(3) {
+            return;
+        }
+        FRAMES.fetch_add(1, Ordering::Relaxed);
+        UI_NANOS.fetch_add(at.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        if started.elapsed() >= *span + Duration::from_secs(3) {
+            let frames = FRAMES.load(Ordering::Relaxed).max(1);
+            let ui_ms = UI_NANOS.load(Ordering::Relaxed) as f64 / frames as f64 / 1e6;
+            if let Ok(out) = std::env::var("MADRID_BENCH_OUT") {
+                let _ = std::fs::write(out, format!("{frames} {ui_ms:.3}"));
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+}
+
+impl Launcher {
+    fn ui_frame(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+        let ctx = ctx.clone();
         self.poll(&ctx);
         self.handle_shortcuts(&ctx);
         self.pump_middle_scroll(&ctx);

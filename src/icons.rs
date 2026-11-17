@@ -409,17 +409,18 @@ pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32, weight: f32) {
                     p.add(Shape::convex_polygon(mapped.clone(), color, Stroke::NONE));
                 }
                 if *stroke && mapped.len() >= 2 {
-                    for pair in mapped.windows(2) {
-                        p.line_segment([pair[0], pair[1]], stroke_style);
-                    }
+                    // One path per polyline: egui joins the corners itself.
+                    // (Was: a segment + a cap circle per Bézier step — ~10×
+                    // more shapes to tessellate on every frame.)
+                    let (first, last) = (mapped[0], mapped[mapped.len() - 1]);
                     if *closed {
-                        if let (Some(&first), Some(&last)) = (mapped.first(), mapped.last()) {
-                            p.line_segment([last, first], stroke_style);
-                        }
-                    }
-                    if cap_r >= 0.7 {
-                        for &node in &mapped {
-                            p.circle_filled(node, cap_r, color);
+                        p.add(Shape::closed_line(mapped, stroke_style));
+                    } else {
+                        p.add(Shape::line(mapped, stroke_style));
+                        // Round caps only where the stroke really ends.
+                        if cap_r >= 0.7 {
+                            p.circle_filled(first, cap_r, color);
+                            p.circle_filled(last, cap_r, color);
                         }
                     }
                 }

@@ -17,6 +17,7 @@ use std::time::Duration;
 
 static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static BULK: OnceLock<reqwest::Client> = OnceLock::new();
 /// Every byte received by downloads since start — the speed meter source.
 static BYTES: AtomicU64 = AtomicU64::new(0);
 
@@ -54,10 +55,47 @@ pub fn client() -> reqwest::Client {
                 .pool_idle_timeout(Duration::from_secs(60))
                 .tcp_nodelay(true)
                 .tcp_keepalive(Duration::from_secs(30))
+                // Bigger HTTP/2 flow-control windows on fast links: a single
+                // stream is not capped at ~64 KB in flight.
+                .http2_adaptive_window(true)
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new())
         })
         .clone()
+}
+
+/// HTTP/1.1-only client for the extra byte ranges of a big file.
+///
+/// Over HTTP/2 every request to a host is multiplexed onto ONE connection,
+/// so eight «parallel» ranges shared one TCP window and downloaded no faster
+/// than a single stream. Here each range gets its own connection — what a
+/// download manager does. Must be used on [`rt()`] (its pool lives there).
+pub fn bulk_client() -> reqwest::Client {
+    BULK.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent(format!(
+                "MinecraftLauncherMadrid/{} (Windows)",
+                crate::config::VERSION
+            ))
+            .http1_only()
+            .connect_timeout(Duration::from_secs(12))
+            .read_timeout(Duration::from_secs(40))
+            .pool_max_idle_per_host(16)
+            .pool_idle_timeout(Duration::from_secs(30))
+            .tcp_nodelay(true)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+    .clone()
+}
+
+/// True when running on the shared runtime (where [`bulk_client`] may be
+/// used); isolated runtimes (server bootstrap) keep their own client.
+fn on_shared_rt() -> bool {
+    match (tokio::runtime::Handle::try_current(), RT.get()) {
+        (Ok(cur), Some(rt)) => cur.id() == rt.handle().id(),
+        _ => false,
+    }
 }
 
 /// Runs a background job on the shared runtime.
@@ -201,6 +239,19 @@ async fn fetch_inner(
     cancel: Option<&AtomicBool>,
     progress: &mut (dyn FnMut(u64, u64) + Send),
 ) -> Result<()> {
+    // Extra ranges each on their own connection (see `bulk_client`).
+    let seg_client = if on_shared_rt() { bulk_client() } else { client.clone() };
+    fetch_inner_with(client, &seg_client, url, tmp, cancel, progress).await
+}
+
+async fn fetch_inner_with(
+    client: &reqwest::Client,
+    seg_client: &reqwest::Client,
+    url: &str,
+    tmp: &Path,
+    cancel: Option<&AtomicBool>,
+    progress: &mut (dyn FnMut(u64, u64) + Send),
+) -> Result<()> {
     let plain = || async {
         client
             .get(url)
@@ -266,6 +317,7 @@ async fn fetch_inner(
     }
 
     // Split the rest into parallel ranges.
+    let client = seg_client;
     let rest = total - HEAD_CHUNK;
     let parts = (rest / MIN_SEGMENT).clamp(1, MAX_SEGMENTS - 1);
     let size = rest.div_ceil(parts);
@@ -426,6 +478,43 @@ mod tests {
         assert!(!ranges_supported("https://www.curseforge.com/api/v1/mods/1/files/2/download"));
         assert!(ranges_supported("https://cdn.modrinth.com/data/x/a.jar"));
         assert!(ranges_supported("https://piston-data.mojang.com/v1/objects/x/client.jar"));
+    }
+
+    /// `cargo test live_range_speed -- --ignored --nocapture`: one big file
+    /// through the HTTP/2 client vs. per-range HTTP/1.1 connections.
+    #[test]
+    #[ignore]
+    fn live_range_speed() {
+        let url = std::env::var("MADRID_SPEED_URL").unwrap_or_else(|_| {
+            // Minecraft 1.20.1 client.jar, ~23 MB.
+            "https://piston-data.mojang.com/v1/objects/0c3ec587af28e5a785c0b4a7b8a30f9a8f78f838/client.jar".into()
+        });
+        let dir = std::env::temp_dir().join("sad-range-speed");
+        let _ = std::fs::create_dir_all(&dir);
+        for round in 0..2 {
+            for (name, h1) in [("h2-shared", false), ("h1-ranges", true)] {
+                let dest = dir.join(format!("{name}-{round}.bin"));
+                let _ = std::fs::remove_file(&dest);
+                let url = url.clone();
+                let started = std::time::Instant::now();
+                let res = rt().block_on(async move {
+                    let main = client();
+                    if h1 {
+                        fetch_to(&main, &url, &dest, None, &mut |_, _| {}).await.map(|_| dest)
+                    } else {
+                        // Old behaviour: segments on the shared HTTP/2 client.
+                        fetch_inner_with(&main, &main, &url, &part_path(&dest), None, &mut |_, _| {})
+                            .await
+                            .map(|_| part_path(&dest))
+                    }
+                });
+                let path = res.expect("download");
+                let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                let secs = started.elapsed().as_secs_f64();
+                println!("{name:10} round {round}: {:.1} MB in {secs:.2}s = {:.1} MB/s", len as f64 / 1048576.0, len as f64 / 1048576.0 / secs);
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 
     #[test]

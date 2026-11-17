@@ -215,6 +215,9 @@ fn worker_loop(
     let mut cached_ext = (false, 0usize, String::new());
     let mut last_scan = Instant::now() - Duration::from_secs(2);
     let mut prev_anti_afk_on = rt.anti_afk.load(Ordering::Relaxed);
+    let mut fine_timer = false;
+    let mut cached_fg = FgInfo::default();
+    let mut last_fg = Instant::now() - Duration::from_secs(1);
 
     while !rt.stop.load(Ordering::Relaxed) {
         let capturing = rt.capturing_bind.load(Ordering::Relaxed);
@@ -250,12 +253,24 @@ fn worker_loop(
         let child_pid = shared.game_pid();
         let child_running = shared.is_game_running();
 
-        // Focus check runs every tick; full window scan cached every 500ms.
-        let fg = platform::foreground_minecraft(child_pid);
+        // Nothing to automate and no game of ours: only the Effects status
+        // strip wants to know about a Minecraft window, so look rarely.
+        let idle = !child_running
+            && !rt.anti_afk.load(Ordering::Relaxed)
+            && !rt.autoclicker.load(Ordering::Relaxed);
+        let scan_every = Duration::from_millis(if idle { 2500 } else { 500 });
+
+        // Focus check every tick while it matters; when idle the hotkey
+        // poll may still run every 35 ms, the window lookups need not.
+        if !idle || last_fg.elapsed() >= Duration::from_millis(400) {
+            cached_fg = platform::foreground_minecraft(child_pid);
+            last_fg = Instant::now();
+        }
+        let fg = &cached_fg;
         if fg.is_mc {
             cached_ext = (true, fg.hwnd_raw, fg.title.clone());
             last_scan = Instant::now();
-        } else if last_scan.elapsed() >= Duration::from_millis(500) {
+        } else if last_scan.elapsed() >= scan_every {
             cached_ext = platform::find_minecraft_window(child_pid);
             last_scan = Instant::now();
         }
@@ -295,11 +310,23 @@ fn worker_loop(
         let autoclicker_on = rt.autoclicker.load(Ordering::Relaxed);
         let click_ms = rt.autoclicker_ms.load(Ordering::Relaxed).clamp(1, 1000) as u64;
         let click_every = Duration::from_millis(click_ms);
-        if autoclicker_on && mc_running && mc_focused && !capturing {
+        let clicking = autoclicker_on && mc_running && mc_focused && !capturing;
+        // 1 ms timer only while clicking: Windows sleeps in ~15.6 ms steps
+        // otherwise, so «10 мс» would really click every ~16 ms.
+        if clicking != fine_timer {
+            fine_timer = clicking;
+            platform::fine_timer(clicking);
+        }
+        if clicking {
             if last_click.elapsed() >= click_every {
                 platform::send_mouse_click(rt.autoclicker_rmb.load(Ordering::Relaxed));
                 click_count += 1;
-                last_click = Instant::now();
+                // Fixed cadence (no drift from the time spent sending), but
+                // never a burst to «catch up» after a pause.
+                last_click += click_every;
+                if last_click.elapsed() > click_every * 2 {
+                    last_click = Instant::now();
+                }
             }
         }
 
@@ -330,14 +357,20 @@ fn worker_loop(
             ctx.request_repaint();
         }
 
-        let sleep_ms = if autoclicker_on && mc_running && mc_focused {
+        let sleep_ms = if clicking {
             (click_ms / 2).clamp(1, 15)
         } else if ac_has_bind(&rt) {
+            // A hotkey press must still be caught (~40 ms is a short tap).
             35
+        } else if idle {
+            400
         } else {
             140
         };
         std::thread::sleep(Duration::from_millis(sleep_ms));
+    }
+    if fine_timer {
+        platform::fine_timer(false);
     }
 }
 
@@ -436,6 +469,22 @@ mod platform {
         fn PostMessageW(hwnd: *mut c_void, msg: u32, w_param: usize, l_param: isize) -> i32;
     }
 
+    #[link(name = "winmm")]
+    extern "system" {
+        fn timeBeginPeriod(u_period: u32) -> u32;
+        fn timeEndPeriod(u_period: u32) -> u32;
+    }
+
+    pub(super) fn fine_timer(on: bool) {
+        unsafe {
+            if on {
+                timeBeginPeriod(1);
+            } else {
+                timeEndPeriod(1);
+            }
+        }
+    }
+
     fn win_text(hwnd: *mut c_void, class: bool) -> String {
         let mut buf = [0u16; 160];
         let len = unsafe {
@@ -464,12 +513,17 @@ mod platform {
         }
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
-        let class_name = win_text(hwnd, true);
-        let is_glfw = class_name == "GLFW30" || class_name == "LWJGL";
         if child_pid != 0 && pid == child_pid {
             return Some(if title.is_empty() { "Minecraft".into() } else { title });
         }
-        if is_glfw && !title.is_empty() {
+        if title.is_empty() {
+            return None;
+        }
+        // A game started elsewhere: a GLFW window is not enough (other games
+        // use GLFW too, and the autoclicker must never click there).
+        let class_name = win_text(hwnd, true);
+        let mc_title = title.to_ascii_lowercase().contains("minecraft");
+        if (class_name == "GLFW30" && mc_title) || class_name == "LWJGL" {
             return Some(title);
         }
         None
@@ -687,6 +741,8 @@ mod platform {
     }
 
     pub(super) fn send_mouse_click(_rmb: bool) {}
+
+    pub(super) fn fine_timer(_on: bool) {}
 
     pub(super) fn send_afk_step(_mc_focused: bool, _mc_hwnd: usize) -> bool {
         false

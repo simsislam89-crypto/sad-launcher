@@ -688,7 +688,14 @@ impl Launcher {
                 ui.add_space(14.0);
             });
 
+        // Sliders (memory, transparency) change on every frame of a drag:
+        // config.json is written once, on release.
         if save {
+            self.cfg_dirty = true;
+        }
+        let save = self.cfg_dirty && !ui.input(|i| i.pointer.any_down());
+        if save {
+            self.cfg_dirty = false;
             if !crate::util::nickname_valid(&self.cfg.nickname) {
                 self.toast("Ник должен быть 3–16 символов: буквы, цифры, _");
             } else {

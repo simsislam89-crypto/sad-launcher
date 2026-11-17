@@ -17,9 +17,8 @@ impl Launcher {
         let mut start_bind: Option<BindTarget> = None;
 
         let spec = self.active_spec();
-        let instance = self.cfg.instance_dir();
         let is_vanilla = spec.loader == Loader::Vanilla;
-        let applied = effects::inspect_instance_applied(&instance, &self.effects);
+        let applied = self.effects_applied_state();
         let missing_mods = effects::missing_mod_targets(&self.effects, &spec, &self.mods_cache);
         let snap = self.auto_snap.clone();
         let active_n = self.effects.active_count();
@@ -872,8 +871,14 @@ impl Launcher {
             self.effects.anti_afk_secs = automation::clamp_interval_secs(self.effects.anti_afk_secs);
             self.effects.autoclicker_ms = automation::clamp_click_ms(self.effects.autoclicker_ms);
             self.effects.autoclicker_cps = (1000.0 / self.effects.autoclicker_ms as f32).clamp(1.0, 1000.0);
-            effects::save(&self.effects);
             self.automation.update_from_config(&self.effects);
+            self.effects_dirty = true;
+        }
+        // A slider changes the value on every frame of a drag: the file is
+        // written once, when the mouse is let go (was: every frame).
+        if self.effects_dirty && !ui.input(|i| i.pointer.any_down()) {
+            self.effects_dirty = false;
+            effects::save(&self.effects);
         }
         if let Some(target) = start_bind {
             if self.bind_capture == Some(target) {
@@ -886,6 +891,7 @@ impl Launcher {
         }
         if reset_now {
             self.effects = EffectsConfig::default();
+            self.effects_dirty = false;
             effects::save(&self.effects);
             self.automation.update_from_config(&self.effects);
             apply_now = true;

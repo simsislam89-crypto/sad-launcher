@@ -14,8 +14,8 @@
   <link rel="icon" type="image/png" href="assets/icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20261117c">
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
@@ -69,7 +69,7 @@
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
         </a>
-        <h1 class="display" data-blur-text data-focus-hover="true">Майнкрафт, который просто запускается.</h1>
+        <h1 class="display" data-blur-text>Майнкрафт, который просто запускается.</h1>
         <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду или в одной сети, эффекты с автозагрузкой модов, автокликер в миллисекундах и Java, которая ставится сама.</p>
         <div class="hero__ctas hero-in">
           <a class="btn btn--light magnet" href="https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe" data-download download>Скачать для Windows</a>
@@ -86,7 +86,10 @@
       </div>
       <div class="tilt" id="tilt">
         <figure class="tilt__frame glass">
-          <img src="assets/shot-mods.png" width="1120" height="720" alt="Каталог модов Sad Launcher: сетка карточек с кнопками «Скачать» и «Добавить»" loading="lazy" decoding="async">
+          <picture>
+            <source type="image/webp" srcset="assets/shot-mods@2x.webp 2480w" sizes="(max-width: 1112px) calc(100vw - 52px), 1060px">
+            <img src="assets/shot-mods@2x.jpg" srcset="assets/shot-mods@2x.jpg 2480w" sizes="(max-width: 1112px) calc(100vw - 52px), 1060px" width="1240" height="720" alt="Каталог модов Sad Launcher: сетка карточек с кнопками «Добавить» и «Скачать»" loading="lazy" decoding="async">
+          </picture>
         </figure>
       </div>
     </section>
@@ -347,8 +350,8 @@
             </a>
           </div>
 
-          <!-- Card 6: Integration Hub (Loaders + Auto-updater) -->
-          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+          <!-- Card 6: Integration Hub (Loaders + Auto-updater) — 4 columns wide, closes the grid -->
+          <div class="magic-bento__cell magic-bento__cell--wide" style="grid-column: span 4; grid-row: span 1;">
             <a class="magic-bento__card" href="#faq-updates" data-clickable>
               <span class="magic-bento__light"></span>
               <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
@@ -455,70 +458,194 @@
       </div>
     </section>
 
-    <section class="faq-sec" id="faq">
-      <div class="wrap">
-        <div class="faq-head">
-          <div>
-            <h2 class="h2 reveal" data-blur-text>Вопросы и ответы.</h2>
-            <p class="sub reveal faq-sub">Всё про установку, игру с друзьями, эффекты, обновления и сохранность миров.</p>
-          </div>
-          <div class="stf-meta" id="faq-tools">
-            <div class="stf-search" role="search">
-              <label for="stfQ">Поиск по вопросам</label>
-              <div class="stf-field">
-                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                  <circle cx="8.5" cy="8.5" r="6" stroke="currentColor" stroke-width="1.6"></circle>
-                  <path d="m13 13 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
-                </svg>
-                <input id="stfQ" type="search" autocomplete="off" spellcheck="false" placeholder="Например, «эффекты», «автокликер» или «Linux»">
-                <button type="button" class="stf-clear" id="stfClear" hidden>Очистить</button>
-              </div>
-              <div class="stf-count" id="stfCount" aria-live="polite"></div>
+    <section class="stf" id="faq" aria-labelledby="faq-title">
+      <div class="wrap stf-wrap">
+        <h2 class="stf-title" id="faq-title" data-slit="true" aria-label="Частые вопросы">
+          <span class="stf-line">Частые</span>
+          <span class="stf-line">вопросы</span>
+        </h2>
+
+        <div class="stf-meta">
+          <p class="stf-intro">Коротко про установку, игру с другом, эффекты и обновления. Ответа нет — спросите на GitHub.</p>
+          <div class="stf-search" role="search">
+            <label for="stfQ">Поиск по ответам</label>
+            <div class="stf-field">
+              <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="8.5" cy="8.5" r="6" stroke="currentColor" stroke-width="1.6"/><path d="m13 13 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+              <input id="stfQ" type="search" autocomplete="off" spellcheck="false" placeholder="Например, «автокликер» или «Linux»">
+              <button type="button" class="stf-clear" id="stfClear" hidden>Очистить</button>
             </div>
+            <div class="stf-count" id="stfCount" aria-live="polite"></div>
           </div>
         </div>
 
-        <div class="faq stf" id="faqList">
-          <details class="faq__item" id="faq-account">
-            <summary>Нужен ли аккаунт Microsoft?</summary>
-            <p>Нет. Достаточно придумать ник от 3 до 16 символов: можно сразу играть в одиночной игре, создавать комнаты для друзей и заходить на локальные или открытые серверы.</p>
-          </details>
-          <details class="faq__item" id="faq-friend">
-            <summary>Как играть с другом на одном сервере?</summary>
-            <p>Откройте вкладку «Игра с другом». Можно создать комнату из 5 цифр либо открыть мир для сети, вписать порт и сразу скопировать один из двух адресов: зелёный адрес для одной Wi‑Fi сети / Radmin / Hamachi или внешний IP для подключения через интернет.</p>
-          </details>
-          <details class="faq__item" id="faq-effects">
-            <summary>Как работают «Эффекты», автокликер в миллисекундах и защита от АФК?</summary>
-            <p>Встроенные эффекты обновляют <code>options.txt</code> и ресурспак <code>SadEffects.zip</code> прямо во время игры (достаточно нажать <code>F3+T</code> в Minecraft), а недостающие визуальные моды с Modrinth ставятся одной кнопкой. Автокликер настраивается в миллисекундах (от <code>1 мс</code>, например <code>10 мс</code> ≈ 100 кликов/с) со своим биндом и срабатывает строго когда активно окно Minecraft. Защита от АФК настраивается вплоть до 60 минут.</p>
-          </details>
-          <details class="faq__item" id="faq-updates">
-            <summary>Как обновляется лаунчер и пропадают ли настройки?</summary>
-            <p>При выходе новой версии лаунчер сам показывает баннер с размером обновления, кнопками «Напомнить позже» и «Не показывать». Обновляется только исполняемый файл — ваш ник, миры, скины и сборки в <code>%APPDATA%\Sad Launcher</code> остаются на месте.</p>
-          </details>
-          <details class="faq__item" id="faq-platforms">
-            <summary>Работает ли автоустановка на macOS и Linux?</summary>
-            <p>Да. Для macOS доступен автоустановщик <code>install-macos.command</code>, который сам ставит <code>Sad Launcher.app</code> в Программы, а для Linux — скрипт <code>install-linux.sh</code> (или одна команда для терминала), создающий бинарник и ярлык в меню приложений.</p>
-          </details>
-          <details class="faq__item" id="faq-weak-pc">
-            <summary>Пойдёт ли на слабом компьютере?</summary>
-            <p>Да. Лаунчер написан на Rust, в простое занимает около 5–15 МБ и сворачивается на время игры, отдавая приоритет и видеокарту самому Minecraft.</p>
-          </details>
-          <details class="faq__item" id="faq-files">
-            <summary>Где лежат файлы и как полностью удалить лаунчер?</summary>
-            <p>Все данные хранятся в <code>%APPDATA%\Sad Launcher</code> на Windows (и стандартной папке данных пользователя на Linux/macOS). В настройках есть кнопка «Удалить всё» — она аккуратно убирает сборки, файлы и ярлыки.</p>
-          </details>
-          <details class="faq__item" id="faq-shortcuts">
-            <summary>Какие есть быстрые кнопки управления в лаунчере?</summary>
-            <p>Боковые кнопки мыши (Назад/Вперёд) и <code>Alt + ←/→</code> листают историю вкладок, зажатие или клик колесиком включает плавную автопрокрутку, а <code>Ctrl+1..7</code> и <code>Ctrl+K/F</code> переключают разделы и поиск.</p>
-          </details>
+        <ul class="stf-chips" id="stfChips" aria-label="Темы вопросов">
+            <li><button type="button" class="stf-chip" aria-pressed="true" data-cat="">Все <small>9</small></button></li>
+            <li><button type="button" class="stf-chip" aria-pressed="false" data-cat="Установка">Установка <small>3</small></button></li>
+            <li><button type="button" class="stf-chip" aria-pressed="false" data-cat="Игра">Игра <small>3</small></button></li>
+            <li><button type="button" class="stf-chip" aria-pressed="false" data-cat="Скорость">Скорость <small>2</small></button></li>
+            <li><button type="button" class="stf-chip" aria-pressed="false" data-cat="Обновления">Обновления <small>1</small></button></li>
+        </ul>
+
+        <ul class="stf-list" id="faqList">
+            <li class="stf-item" id="faq-account" data-cat="Установка" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-account-b" aria-expanded="false" aria-controls="faq-account-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Нужен ли аккаунт Microsoft?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-account-p" role="region" aria-labelledby="faq-account-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Нет. Достаточно придумать ник от 3 до 16 символов: сразу доступны одиночная игра, комнаты для друзей и вход на локальные или открытые серверы.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Установка</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-friend" data-cat="Игра" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-friend-b" aria-expanded="false" aria-controls="faq-friend-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Как играть с другом на одном сервере?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-friend-p" role="region" aria-labelledby="faq-friend-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Откройте вкладку «Игра с другом». Создайте комнату из 5 цифр или откройте мир для сети, впишите порт и скопируйте один из двух адресов: зелёный — для одной Wi‑Fi сети, Radmin или Hamachi, внешний IP — для игры через интернет.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Игра</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-effects" data-cat="Игра" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-effects-b" aria-expanded="false" aria-controls="faq-effects-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Как работают «Эффекты», автокликер и защита от АФК?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-effects-p" role="region" aria-labelledby="faq-effects-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Эффекты меняют <code>options.txt</code> и ресурспак <code>SadEffects.zip</code> прямо во время игры — нажмите <code>F3+T</code> в Minecraft. Недостающие моды с Modrinth ставятся одной кнопкой.</p><p>Автокликер настраивается в миллисекундах (<code>10 мс</code> ≈ 100 кликов/с), включается своим биндом и кликает только в активном окне Minecraft. Защита от АФК — с интервалом до 60 минут.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Игра</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-weak-pc" data-cat="Скорость" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-weak-pc-b" aria-expanded="false" aria-controls="faq-weak-pc-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Пойдёт ли на слабом компьютере?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-weak-pc-p" role="region" aria-labelledby="faq-weak-pc-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Да. Лаунчер написан на Rust, в простое занимает десятки мегабайт оперативной памяти и не рисует кадры, пока окно в фоне. На время игры он сворачивается и отдаёт процессор и видеокарту Minecraft.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Скорость</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-speed" data-cat="Скорость" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-speed-b" aria-expanded="false" aria-controls="faq-speed-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Почему модпаки ставятся так быстро?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-speed-p" role="region" aria-labelledby="faq-speed-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Большие файлы качаются несколькими частями параллельно, каждая по своему соединению, а моды пака — по 32 одновременно. Конфиги распаковываются прямо во время скачивания, а файлы, которые уже есть в других сборках, не скачиваются второй раз.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Скорость</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-updates" data-cat="Обновления" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-updates-b" aria-expanded="false" aria-controls="faq-updates-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Как обновляется лаунчер и пропадут ли настройки?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-updates-p" role="region" aria-labelledby="faq-updates-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Когда выходит новая версия, лаунчер показывает карточку с размером обновления и кнопками «Обновиться», «Напомнить позже» и «Не показывать». Заменяется только сам exe — ник, миры, скины и сборки в <code>%APPDATA%\Sad Launcher</code> остаются на месте.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Обновления</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-platforms" data-cat="Установка" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-platforms-b" aria-expanded="false" aria-controls="faq-platforms-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Работает ли на macOS и Linux?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-platforms-p" role="region" aria-labelledby="faq-platforms-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Для macOS есть установщик <code>install-macos.command</code>, который ставит <code>Sad Launcher.app</code> в Программы, для Linux — скрипт <code>install-linux.sh</code>, который кладёт программу и ярлык в меню приложений.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Установка</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-files" data-cat="Установка" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-files-b" aria-expanded="false" aria-controls="faq-files-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Где лежат файлы и как полностью удалить лаунчер?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-files-p" role="region" aria-labelledby="faq-files-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Все данные — в <code>%APPDATA%\Sad Launcher</code> на Windows и в стандартной папке данных пользователя на Linux и macOS. В настройках есть кнопка полного удаления: она убирает сборки, файлы и ярлыки.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Установка</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+            <li class="stf-item" id="faq-shortcuts" data-cat="Игра" data-state="closed">
+              <span class="stf-fill" aria-hidden="true"></span>
+              <h3 class="stf-h">
+                <button type="button" class="stf-btn" id="faq-shortcuts-b" aria-expanded="false" aria-controls="faq-shortcuts-p">
+                  <span class="stf-row"><span class="stf-label"><span class="stf-q">Какие есть горячие клавиши?</span></span><span class="stf-cell" aria-hidden="true"><svg class="stf-plus" viewBox="0 0 32 32" fill="none"><path d="M16 1v30M1 16h30" stroke="currentColor" stroke-width="2"/></svg></span></span>
+                </button>
+              </h3>
+              <div class="stf-panel" id="faq-shortcuts-p" role="region" aria-labelledby="faq-shortcuts-b">
+                <div class="stf-panel-in">
+                  <div class="stf-answer">
+                    <div class="stf-text"><p>Боковые кнопки мыши и <code>Alt + ←/→</code> листают историю вкладок, клик колёсиком включает плавную автопрокрутку, <code>Ctrl+1…7</code> переключают разделы, <code>Ctrl+K</code> или <code>Ctrl+F</code> — поиск.</p></div>
+                    <div class="stf-tools"><span class="stf-tag">Игра</span><button type="button" class="stf-copy">Скопировать ссылку</button></div>
+                  </div>
+                </div>
+              </div>
+            </li>
+        </ul>
+
+        <div class="stf-empty" id="stfEmpty" role="status" hidden>
+          <p>Ничего не нашлось по «<span id="stfEmptyQ"></span>».</p>
+          <button type="button" class="stf-copy stf-reset" id="stfReset">Показать все вопросы</button>
         </div>
 
-        <div class="stf-empty" id="stfEmpty" hidden>
-          <p id="stfEmptyTxt">По этому запросу вопросов не нашлось.</p>
-          <div class="stf-empty__act">
-            <button type="button" class="btn btn--glass btn--sm" id="stfReset">Показать все вопросы</button>
-          </div>
+        <div class="stf-contact">
+          <p>Остался вопрос?</p>
+          <a class="stf-cta" href="https://github.com/simsislam89-crypto/sad-launcher/issues" target="_blank" rel="noopener">
+            <span>Спросить на GitHub <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="M3 9h11M10 4.5 14.5 9 10 13.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <span aria-hidden="true">Спросить на GitHub <svg viewBox="0 0 18 18" fill="none"><path d="M3 9h11M10 4.5 14.5 9 10 13.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+          </a>
         </div>
+        <span class="stf-sr" id="stfLive" aria-live="polite"></span>
       </div>
     </section>
   </main>
@@ -566,6 +693,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="app.js?v=20261117c" defer></script>
 </body>
 </html>

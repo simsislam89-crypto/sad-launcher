@@ -1248,10 +1248,18 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
             }
         }
     }
+    // The tail of the queue reports too (the bar used to freeze here for
+    // the last ~128 files).
     while set.join_next().await.is_some() {
         done += 1;
+        if done % 32 == 0 {
+            on(InstallEvent::Progress {
+                done,
+                total,
+                label: format!("Ресурсы · {done}/{total}"),
+            });
+        }
     }
-    let _ = done;
     on(InstallEvent::Progress {
         done: total,
         total,

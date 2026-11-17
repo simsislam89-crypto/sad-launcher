@@ -78,7 +78,11 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title)
-            .with_inner_size([1240.0, 760.0])
+            .with_inner_size({
+                // MADRID_DEV_ZOOM (website screenshots): same layout, more pixels.
+                let z = std::env::var("MADRID_DEV_ZOOM").ok().and_then(|z| z.parse::<f32>().ok()).unwrap_or(1.0).clamp(0.5, 3.0);
+                [1240.0 * z, 760.0 * z]
+            })
             .with_min_inner_size([960.0, 620.0])
             .with_transparent(true)
             .with_decorations(false)

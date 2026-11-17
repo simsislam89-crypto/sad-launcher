@@ -833,60 +833,330 @@
     }, 2600);
   }
 
-  /* FAQ live search + counter + reset (eroot.shop style) */
+  /* FAQ — Slit Type (21st.dev) in plain JS: slit headline, ink flood,
+     single open, ↑↓ Home End, #hash deep links, copy link, search with
+     highlighted matches and snippets, topic chips. */
   function initFaq() {
+    var root = document.getElementById('faq');
+    var list = document.getElementById('faqList');
+    if (!root || !list) return;
     var input = document.getElementById('stfQ');
     var clearBtn = document.getElementById('stfClear');
     var countEl = document.getElementById('stfCount');
-    var listEl = document.getElementById('faqList');
     var emptyEl = document.getElementById('stfEmpty');
+    var emptyQ = document.getElementById('stfEmptyQ');
     var resetBtn = document.getElementById('stfReset');
-    if (!input || !listEl) return;
+    var live = document.getElementById('stfLive');
+    var chips = Array.prototype.slice.call(document.querySelectorAll('#stfChips .stf-chip'));
+    var items = Array.prototype.slice.call(list.querySelectorAll('.stf-item'));
+    var reduced = function () {
+      return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    };
 
-    var items = Array.prototype.slice.call(listEl.querySelectorAll('.faq__item'));
-
-    function updateFaq() {
-      var q = (input.value || '').trim().toLowerCase();
-      var shown = 0;
-
-      items.forEach(function (item) {
-        var text = (item.textContent || '').toLowerCase();
-        var match = !q || text.indexOf(q) !== -1;
-        item.hidden = !match;
-        if (match) {
-          shown++;
-          if (q && q.length >= 2) item.open = true;
-        }
+    // Headline: each letter its own span, rising through the slit once.
+    var title = root.querySelector('.stf-title');
+    var n = 0;
+    if (title) {
+      Array.prototype.forEach.call(title.querySelectorAll('.stf-line'), function (line) {
+        var words = line.textContent.trim().split(/\s+/);
+        line.textContent = '';
+        line.setAttribute('aria-hidden', 'true');
+        words.forEach(function (word, wi) {
+          var w = document.createElement('span');
+          w.className = 'stf-word';
+          Array.from(word).forEach(function (ch) {
+            var c = document.createElement('span');
+            c.className = 'stf-ch';
+            c.style.setProperty('--i', n++);
+            c.textContent = ch;
+            w.appendChild(c);
+          });
+          line.appendChild(w);
+          if (wi < words.length - 1) line.appendChild(document.createTextNode(' '));
+        });
       });
-
-      if (clearBtn) clearBtn.hidden = !q;
-      if (emptyEl) emptyEl.hidden = shown > 0;
-      if (countEl) {
-        if (!q) {
-          countEl.textContent = 'Всего вопросов: ' + items.length;
-        } else {
-          countEl.textContent = 'Найдено: ' + shown + ' из ' + items.length;
-        }
+      if (!reduced() && 'IntersectionObserver' in window) {
+        root.setAttribute('data-intro', 'pending');
+        var io = new IntersectionObserver(function (entries) {
+          if (entries.some(function (e) { return e.isIntersecting; })) {
+            requestAnimationFrame(function () { root.setAttribute('data-intro', 'done'); });
+            io.disconnect();
+          }
+        }, { threshold: 0.15 });
+        io.observe(root);
+        setTimeout(function () { root.setAttribute('data-intro', 'done'); }, 2500);
       }
     }
 
-    input.addEventListener('input', updateFaq);
+    // Per item: the plain question/answer (for search) and the inverted row copy.
+    var data = items.map(function (item) {
+      var btn = item.querySelector('.stf-btn');
+      var row = btn.querySelector('.stf-row');
+      var inv = row.cloneNode(true);
+      inv.classList.add('stf-row--inv');
+      inv.setAttribute('aria-hidden', 'true');
+      btn.appendChild(inv);
+      var text = item.querySelector('.stf-text');
+      return {
+        item: item,
+        id: item.id,
+        btn: btn,
+        labels: [row.querySelector('.stf-label'), inv.querySelector('.stf-label')],
+        question: row.querySelector('.stf-q').textContent,
+        answerHTML: text.innerHTML,
+        answer: text.textContent.replace(/\s+/g, ' ').trim(),
+        text: text,
+        cat: item.getAttribute('data-cat') || ''
+      };
+    });
+
+    var openId = null;
+    var timers = {};
+    var query = '';
+    var category = '';
+
+    function setState(d, state) {
+      d.item.setAttribute('data-state', state);
+      d.btn.setAttribute('aria-expanded', state === 'open' ? 'true' : 'false');
+    }
+
+    function close(d) {
+      clearTimeout(timers[d.id]);
+      if (reduced()) { setState(d, 'closed'); return; }
+      setState(d, 'closing');
+      timers[d.id] = setTimeout(function () {
+        if (d.item.getAttribute('data-state') === 'closing') setState(d, 'closed');
+      }, 300);
+    }
+
+    function open(id, scroll) {
+      data.forEach(function (d) {
+        if (d.id === id) {
+          clearTimeout(timers[d.id]);
+          setState(d, 'open');
+          if (scroll) {
+            setTimeout(function () {
+              d.btn.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+            }, 60);
+          }
+        } else if (d.item.getAttribute('data-state') === 'open') {
+          close(d);
+        }
+      });
+      openId = id;
+      render();
+    }
+
+    function toggle(d) {
+      if (openId === d.id) {
+        close(d);
+        openId = null;
+        render();
+      } else {
+        open(d.id, false);
+      }
+    }
+
+    // ---- search
+    function words(q) { return q.toLowerCase().split(/\s+/).filter(Boolean); }
+    function matches(text, q) {
+      var ws = words(q);
+      var t = text.toLowerCase();
+      return ws.every(function (w) { return t.indexOf(w) > -1; });
+    }
+    function esc(s) {
+      return s.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+    }
+    function marked(text, q) {
+      var ws = words(q);
+      if (!ws.length) return esc(text);
+      var t = text.toLowerCase();
+      var hit = new Array(text.length).fill(false);
+      ws.forEach(function (w) {
+        var at = t.indexOf(w);
+        while (at > -1) {
+          for (var k = at; k < at + w.length; k++) hit[k] = true;
+          at = t.indexOf(w, at + 1);
+        }
+      });
+      var out = '';
+      var open = false;
+      for (var k = 0; k < text.length; k++) {
+        if (hit[k] && !open) { out += '<mark class="stf-mark">'; open = true; }
+        if (!hit[k] && open) { out += '</mark>'; open = false; }
+        out += esc(text[k]);
+      }
+      return out + (open ? '</mark>' : '');
+    }
+    function snippet(text, q) {
+      var ws = words(q);
+      var t = text.toLowerCase();
+      var at = -1;
+      ws.forEach(function (w) {
+        var i = t.indexOf(w);
+        if (i > -1 && (at < 0 || i < at)) at = i;
+      });
+      if (at < 0) return '';
+      var from = Math.max(0, at - 44);
+      var to = Math.min(text.length, at + 88);
+      if (from > 0) from = text.indexOf(' ', from) + 1 || from;
+      if (to < text.length) to = text.lastIndexOf(' ', to) > at ? text.lastIndexOf(' ', to) : to;
+      return (from > 0 ? '…' : '') + text.slice(from, to).trim() + (to < text.length ? '…' : '');
+    }
+    // Marks inside the answer without breaking its <code>/<p>: text nodes only.
+    function markAnswer(d, q) {
+      d.text.innerHTML = d.answerHTML;
+      if (!words(q).length) return;
+      var walker = document.createTreeWalker(d.text, NodeFilter.SHOW_TEXT);
+      var nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach(function (node) {
+        var html = marked(node.nodeValue, q);
+        if (html.indexOf('<mark') < 0) return;
+        var span = document.createElement('span');
+        span.innerHTML = html;
+        node.parentNode.replaceChild(span, node);
+      });
+    }
+
+    function render() {
+      var shown = 0;
+      var visible = [];
+      var counts = {};
+      var all = 0;
+      data.forEach(function (d) {
+        var hay = d.question + ' ' + d.answer;
+        var qOk = matches(hay, query);
+        if (qOk) {
+          all++;
+          counts[d.cat] = (counts[d.cat] || 0) + 1;
+        }
+        var ok = qOk && (!category || d.cat === category);
+        d.item.hidden = !ok;
+        if (!ok) return;
+        shown++;
+        visible.push(d);
+        var snip = query.trim() && d.item.getAttribute('data-state') !== 'open' ? snippet(d.answer, query) : '';
+        var label = '<span class="stf-q">' + marked(d.question, query) + '</span>' +
+          (snip ? '<span class="stf-snippet">' + marked(snip, query) + '</span>' : '');
+        d.labels.forEach(function (l) { l.innerHTML = label; });
+        markAnswer(d, query);
+      });
+      chips.forEach(function (c) {
+        var cat = c.getAttribute('data-cat');
+        var small = c.querySelector('small');
+        if (small) small.textContent = cat ? (counts[cat] || 0) : all;
+        c.setAttribute('aria-pressed', cat === category ? 'true' : 'false');
+      });
+      var filtering = query.trim() !== '' || category !== '';
+      if (countEl) countEl.textContent = filtering ? shown + ' из ' + data.length + ' вопросов' : '';
+      if (clearBtn) clearBtn.hidden = !query;
+      if (emptyEl) emptyEl.hidden = shown > 0;
+      if (emptyQ) emptyQ.textContent = query.trim() || category;
+      list.hidden = shown === 0;
+      return visible;
+    }
+
+    data.forEach(function (d) {
+      d.btn.addEventListener('click', function () { toggle(d); });
+      d.btn.addEventListener('keydown', function (e) {
+        var vis = data.filter(function (x) { return !x.item.hidden; });
+        var i = vis.indexOf(d);
+        var to = -1;
+        if (e.key === 'ArrowDown') to = (i + 1) % vis.length;
+        else if (e.key === 'ArrowUp') to = (i - 1 + vis.length) % vis.length;
+        else if (e.key === 'Home') to = 0;
+        else if (e.key === 'End') to = vis.length - 1;
+        if (to < 0) return;
+        e.preventDefault();
+        vis[to].btn.focus();
+      });
+      var copy = d.item.querySelector('.stf-copy');
+      if (copy) {
+        copy.addEventListener('click', function () {
+          var url = location.origin + location.pathname + location.search + '#' + d.id;
+          var done = function () {
+            copy.textContent = 'Ссылка скопирована';
+            if (live) live.textContent = 'Ссылка скопирована';
+            clearTimeout(timers.__copy);
+            timers.__copy = setTimeout(function () {
+              copy.textContent = 'Скопировать ссылку';
+              if (live) live.textContent = '';
+            }, 1800);
+          };
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(url).then(done, function () { fallbackCopy(url); done(); });
+          } else {
+            fallbackCopy(url);
+            done();
+          }
+        });
+      }
+    });
+
+    function fallbackCopy(text) {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* nothing else to try */ }
+      ta.remove();
+    }
+
+    if (input) {
+      input.addEventListener('input', function () { query = input.value; render(); });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && input.value) {
+          e.preventDefault();
+          input.value = '';
+          query = '';
+          render();
+        }
+        if (e.key === 'ArrowDown') {
+          var first = data.filter(function (x) { return !x.item.hidden; })[0];
+          if (first) { e.preventDefault(); first.btn.focus(); }
+        }
+      });
+    }
     if (clearBtn) {
       clearBtn.addEventListener('click', function () {
         input.value = '';
-        items.forEach(function (it) { it.open = false; });
-        updateFaq();
+        query = '';
+        render();
         input.focus();
       });
     }
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
-        input.value = '';
-        items.forEach(function (it) { it.open = false; });
-        updateFaq();
+        if (input) input.value = '';
+        query = '';
+        category = '';
+        render();
       });
     }
-    updateFaq();
+    chips.forEach(function (c) {
+      c.addEventListener('click', function () {
+        var cat = c.getAttribute('data-cat');
+        category = category === cat ? '' : cat;
+        render();
+      });
+    });
+
+    // A #hash naming a question (bento cards link here) opens it.
+    function fromHash() {
+      var h = decodeURIComponent(location.hash.replace(/^#/, ''));
+      if (!h) return;
+      var d = data.filter(function (x) { return x.id === h; })[0];
+      if (!d) return;
+      if (d.item.hidden) { query = ''; category = ''; if (input) input.value = ''; }
+      open(h, true);
+    }
+    window.addEventListener('hashchange', fromHash);
+    render();
+    fromHash();
   }
 
   /* Voxel terrain canvas */
