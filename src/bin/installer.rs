@@ -492,10 +492,11 @@ fn window_icon() -> egui::IconData {
 }
 
 pub fn run_silent_update(target_exe: PathBuf) {
-    // Wait up to 25 s for the running launcher to exit and release its file lock.
+    // Wait up to 60 s for the running launcher to exit (it stops its hosted
+    // Minecraft server first) and release its file lock.
     let mut replaced = false;
     let mut last_err = String::new();
-    for _ in 0..160 {
+    for _ in 0..400 {
         match std::fs::write(&target_exe, PAYLOAD) {
             Ok(_) => {
                 replaced = true;

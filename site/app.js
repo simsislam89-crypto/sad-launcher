@@ -814,6 +814,43 @@
   }
 
   /* Search typer demo */
+  /* Card clips: loaded and played only while on screen; still poster
+     under reduced motion or save-data. */
+  function initCardVideos() {
+    var vids = Array.prototype.slice.call(document.querySelectorAll('.magic-bento__video'));
+    if (!vids.length) return;
+    var saveData = navigator.connection && navigator.connection.saveData;
+    if (reduceMotion || saveData || !('IntersectionObserver' in window)) return;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var v = e.target;
+        if (e.isIntersecting) {
+          // Alpha WebM where supported, the black MP4 (blended with
+          // `screen`) in Safari: sources get their URL on first sight.
+          if (!v.dataset.loaded) {
+            v.dataset.loaded = '1';
+            Array.prototype.forEach.call(v.querySelectorAll('source[data-src]'), function (src) {
+              src.src = src.getAttribute('data-src');
+            });
+            v.load();
+          }
+          var p = v.play();
+          // Autoplay refused (iOS Low Power, data saver): the clip would rest
+          // on its empty first frame — show a frame with the content instead.
+          if (p && p.catch) {
+            p.catch(function () {
+              var show = function () { try { v.currentTime = 3.6; } catch (err) { /* not seekable yet */ } };
+              if (v.readyState >= 1) show(); else v.addEventListener('loadedmetadata', show, { once: true });
+            });
+          }
+        } else if (!v.paused) {
+          v.pause();
+        }
+      });
+    }, { rootMargin: '120px 0px', threshold: 0.15 });
+    vids.forEach(function (v) { io.observe(v); });
+  }
+
   function initTyper() {
     var q = document.getElementById('typer');
     var a = document.getElementById('typer-out');
@@ -1343,6 +1380,7 @@
     initBlurText();
     initSpotlightCards();
     initMagicBento();
+    initCardVideos();
     initDock();
     initFaq();
     initTyper();

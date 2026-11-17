@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261117c">
+  <link rel="stylesheet" href="styles.css?v=20261118a">
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
@@ -64,17 +64,16 @@
 
       <div class="hero__content wrap">
         <a class="eyebrow hero-in" href="#effects">
-          <span>Rust · eframe · Эффекты · Анти-АФК · Автокликер 10 мс</span>
+          <span>Rust · бесплатно · без аккаунта</span>
           <svg class="eyebrow__chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <polyline points="9 18 15 12 9 6"></polyline>
           </svg>
         </a>
         <h1 class="display" data-blur-text>Майнкрафт, который просто запускается.</h1>
-        <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду или в одной сети, эффекты с автозагрузкой модов, автокликер в миллисекундах и Java, которая ставится сама.</p>
+        <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду, эффекты и Java, которая ставится сама.</p>
         <div class="hero__ctas hero-in">
           <a class="btn btn--light magnet" href="https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe" data-download download>Скачать для Windows</a>
-          <a class="btn btn--glass" href="#effects">Все возможности</a>
-          <a class="btn btn--glass" href="#faq">Частые вопросы</a>
+          <a class="btn btn--glass" href="#effects">Что внутри</a>
         </div>
       </div>
     </section>
@@ -82,7 +81,7 @@
     <section class="showcase" id="inside">
       <div class="wrap">
         <h2 class="h2 reveal" data-blur-text>Пять карточек в ряд, всё под рукой.</h2>
-        <p class="sub reveal">Каталог Modrinth и CurseForge адаптивно заполняет всю ширину окна без пустых полей, а зажатие колёсика плавно листает списки.</p>
+        <p class="sub reveal">Каталог Modrinth и CurseForge на всю ширину окна.</p>
       </div>
       <div class="tilt" id="tilt">
         <figure class="tilt__frame glass">
@@ -104,19 +103,19 @@
     <section class="band" id="speed">
       <div class="wrap">
         <h2 class="h2 reveal" data-blur-text>Модпак ставится за секунды.</h2>
-        <p class="sub reveal">Архив качается частями в несколько потоков, конфиги пака распаковываются прямо в сборку, пока докачиваются моды.</p>
+        <p class="sub reveal">Файлы качаются в несколько потоков, конфиги распаковываются, пока докачиваются моды.</p>
         <div class="stats">
           <div class="stat reveal">
             <span class="stat__num"><span data-count="4.4" data-dec="1">4,4</span> с</span>
-            <span class="stat__txt">пак Additive, 54 мода и 51 МБ. Реальный замер на канале 100 Мбит/с</span>
+            <span class="stat__txt">пак Additive: 54 мода, 51 МБ</span>
           </div>
           <div class="stat reveal">
             <span class="stat__num"><span data-count="10">10</span> мс</span>
-            <span class="stat__txt">минимальный шаг автокликера (~100 кликов/с) с работой строго в активном окне Minecraft</span>
+            <span class="stat__txt">шаг автокликера, только в окне Minecraft</span>
           </div>
           <div class="stat reveal">
             <span class="stat__num"><span data-count="60">60</span> мин</span>
-            <span class="stat__txt">максимальный интервал защиты от АФК с кастомным биндом и живым таймером</span>
+            <span class="stat__txt">интервал защиты от АФК</span>
           </div>
         </div>
       </div>
@@ -125,265 +124,100 @@
     <!-- ReactBits MagicBento: 6 interactive cards with proximity border glow, click wave, 3D tilt, stars, and live visuals -->
     <section class="features" id="effects">
       <div class="wrap">
-        <h2 class="h2 reveal" data-blur-text>Что внутри лаунчера.</h2>
-        <p class="sub reveal">Наведите курсор или кликните по любой карточке — интерактивная сетка покажет живые графики, пайплайн эффектов и сеть.</p>
+        <h2 class="h2 reveal" data-blur-text>Что внутри.</h2>
+        <p class="sub reveal">Шесть причин поставить его вместо обычного.</p>
 
         <div class="magic-bento" id="magic-bento" data-motion data-intro>
-          <!-- Card 1: Analytics / Speed scrubbable chart -->
           <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
             <a class="magic-bento__card" href="#speed" data-clickable>
               <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
               <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Многопоточная загрузка</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="magic-bento__chart" id="mb-chart">
-                    <div class="magic-bento__figure">
-                      <span class="magic-bento__figure-value" id="mb-chart-val">54 мода · 4,4 с</span>
-                      <span class="magic-bento__figure-note" id="mb-chart-note">8 потоков</span>
-                    </div>
-                    <div class="magic-bento__plot" id="mb-plot">
-                      <svg id="mb-plot-svg" preserveAspectRatio="none" aria-hidden="true"></svg>
-                      <span class="magic-bento__scrub" id="mb-scrub"><span class="magic-bento__scrub-dot" id="mb-scrub-dot"></span></span>
-                    </div>
-                  </div>
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/speed.png"><source data-src="assets/cards/speed.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/speed.mp4" type="video/mp4"></video>
                 </div>
                 <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Сборка модпака без ожидания</h3>
-                  <p class="magic-bento__description">Наведите на график: параллельное скачивание и распаковка конфигов на лету.</p>
+                  <h3 class="magic-bento__title">Модпак за секунды</h3>
+                  <p class="magic-bento__description">Восемь потоков, конфиги распаковываются на лету.</p>
                 </div>
               </div>
               <span class="magic-bento__rim"></span>
               <span class="magic-bento__border"></span>
             </a>
           </div>
-
-          <!-- Card 2: Security / Toggles (Fullbright, Autoclicker 10ms, Anti-AFK) -->
           <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
-            <a class="magic-bento__card" href="#download" data-clickable>
-              <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
-              <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 7L14 16M6.4 8.4L9.2 5.6M18 3v3M16.5 4.5h3"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Вкладка «Эффекты»</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="magic-bento__shield">
-                    <div class="magic-bento__setting magic-bento__tile">
-                      <span class="magic-bento__setting-label">Fullbright + No Render</span>
-                      <span class="magic-bento__badge-green">Готово</span>
-                      <span class="magic-bento__switch" style="--i:0"></span>
-                    </div>
-                    <div class="magic-bento__setting magic-bento__tile">
-                      <span class="magic-bento__setting-label">Автокликер · 10 мс (100/с)</span>
-                      <span class="magic-bento__badge-green">Бинд F6</span>
-                      <span class="magic-bento__switch" style="--i:1"></span>
-                    </div>
-                    <div class="magic-bento__setting magic-bento__tile">
-                      <span class="magic-bento__setting-label">Анти-АФК · до 60 мин</span>
-                      <span class="magic-bento__badge-green">Бинд F7</span>
-                      <span class="magic-bento__switch" style="--i:2"></span>
-                    </div>
-                  </div>
-                </div>
-                <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Эффекты, Анти-АФК и Автокликер в мс</h3>
-                  <p class="magic-bento__description">Работают прямо во время онлайн-игры; автокликер активен строго внутри окна Minecraft.</p>
-                </div>
-              </div>
-              <span class="magic-bento__rim"></span>
-              <span class="magic-bento__border"></span>
-            </a>
-          </div>
-
-          <!-- Card 3: Collaboration / Room + LAN & Internet dual addresses -->
-          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 2;">
-            <a class="magic-bento__card" href="#faq-friend" data-clickable>
-              <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
-              <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Игра с другом в 1 полосу</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="magic-bento__collab magic-bento__well">
-                    <span class="magic-bento__doc-title">Порт 25565 · Оба адреса сразу</span>
-                    <div class="magic-bento__lines">
-                      <div class="magic-bento__addr-row">
-                        <span class="magic-bento__addr-tag magic-bento__addr-tag--green">Сеть</span>
-                        <code>192.168.1.69:25565</code>
-                      </div>
-                      <div class="magic-bento__addr-row">
-                        <span class="magic-bento__addr-tag">Интернет</span>
-                        <code>46.138.87.69:25565</code>
-                      </div>
-                      <span class="magic-bento__line" style="--w:88%">
-                        <span class="magic-bento__selection" style="--from:12%; --span:64%">
-                          <span class="magic-bento__caret"></span>
-                        </span>
-                      </span>
-                      <span class="magic-bento__line" style="--w:72%"></span>
-                    </div>
-                    <span class="magic-bento__cursor magic-bento__cursor--primary" style="--x:56%; --y:54%; --i:0; --path:magic-bento-path-a">
-                      <svg width="15" height="17" viewBox="0 0 16 18"><path d="M2.2 1.6 13.4 9.9c.5.4.3 1.2-.4 1.3l-4.6.6-2.2 4.2c-.3.6-1.2.5-1.4-.1L1.2 2.4c-.2-.6.5-1.1 1-.8Z"/></svg>
-                      <span class="magic-bento__cursor-name">Вы (Хост)</span>
-                    </span>
-                    <span class="magic-bento__cursor magic-bento__cursor--secondary" style="--x:22%; --y:24%; --i:1; --path:magic-bento-path-b">
-                      <svg width="15" height="17" viewBox="0 0 16 18"><path d="M2.2 1.6 13.4 9.9c.5.4.3 1.2-.4 1.3l-4.6.6-2.2 4.2c-.3.6-1.2.5-1.4-.1L1.2 2.4c-.2-.6.5-1.1 1-.8Z"/></svg>
-                      <span class="magic-bento__cursor-name">Друг · В сети</span>
-                    </span>
-                  </div>
-                </div>
-                <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Комната по коду и 2 адреса сразу</h3>
-                  <p class="magic-bento__description">Впишите порт — лаунчер мгновенно покажет зелёный адрес для одной сети и внешний IP для интернета.</p>
-                </div>
-              </div>
-              <span class="magic-bento__rim"></span>
-              <span class="magic-bento__border"></span>
-            </a>
-          </div>
-
-          <!-- Card 4: Automation pipeline (1-click Modrinth + SadEffects.zip + Auto-heal) -->
-          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 2;">
             <a class="magic-bento__card" href="#faq-effects" data-clickable>
               <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
               <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="4.5 12.5 9.5 17.5 19.5 6.5"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Автоматический пайплайн</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="magic-bento__flow" style="--n:4">
-                    <div class="magic-bento__flow-trigger magic-bento__tile">
-                      <span class="magic-bento__flow-glyph">
-                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="8 5 19 12 8 19 8 5"/></svg>
-                      </span>
-                      <span class="magic-bento__flow-copy">
-                        <span class="magic-bento__flow-name">Применить эффекты и моды</span>
-                        <span class="magic-bento__flow-meta magic-bento__flow-hash">live · без перезапуска</span>
-                      </span>
-                    </div>
-                    <ol class="magic-bento__steps magic-bento__well">
-                      <span class="magic-bento__rail" aria-hidden="true"><span class="magic-bento__rail-fill"></span></span>
-                      <li class="magic-bento__step" style="--i:0">
-                        <span class="magic-bento__status">
-                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
-                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
-                        </span>
-                        Патч options.txt (гамма, тряска, тьма)
-                        <span class="magic-bento__step-time">2 мс</span>
-                      </li>
-                      <li class="magic-bento__step" style="--i:1">
-                        <span class="magic-bento__status">
-                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
-                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
-                        </span>
-                        Генерация ресурспака SadEffects.zip
-                        <span class="magic-bento__step-time">4 мс</span>
-                      </li>
-                      <li class="magic-bento__step" style="--i:2">
-                        <span class="magic-bento__status">
-                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
-                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
-                        </span>
-                        Докачка модов с Modrinth в 1 клик
-                        <span class="magic-bento__step-time">1,2 с</span>
-                      </li>
-                      <li class="magic-bento__step" style="--i:3">
-                        <span class="magic-bento__status">
-                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
-                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
-                        </span>
-                        Проверка зависимостей и Java
-                        <span class="magic-bento__step-time">Готово</span>
-                      </li>
-                    </ol>
-                  </div>
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/effects.png"><source data-src="assets/cards/effects.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/effects.mp4" type="video/mp4"></video>
                 </div>
                 <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Скачивание модов эффектов в 1 клик</h3>
-                  <p class="magic-bento__description">Никакого ручного поиска: Gamma Utils, Clear Water, NoFog и Time Changer ставятся прямо из вкладки «Эффекты».</p>
+                  <h3 class="magic-bento__title">Эффекты прямо в игре</h3>
+                  <p class="magic-bento__description">Fullbright, без тумана, автокликер. Без перезапуска.</p>
                 </div>
               </div>
               <span class="magic-bento__rim"></span>
               <span class="magic-bento__border"></span>
             </a>
           </div>
-
-          <!-- Card 5: Smart Russian Search -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#faq-friend" data-clickable>
+              <span class="magic-bento__light"></span>
+              <div class="magic-bento__content">
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/friend.png"><source data-src="assets/cards/friend.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/friend.mp4" type="video/mp4"></video>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Игра с другом</h3>
+                  <p class="magic-bento__description">Комната по коду из пяти цифр.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#faq-speed" data-clickable>
+              <span class="magic-bento__light"></span>
+              <div class="magic-bento__content">
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/pipeline.png"><source data-src="assets/cards/pipeline.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/pipeline.mp4" type="video/mp4"></video>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Всё ставится само</h3>
+                  <p class="magic-bento__description">Java, загрузчик, моды и их зависимости.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
           <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
             <a class="magic-bento__card" href="#inside" data-clickable>
               <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
               <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="10.5" cy="10.5" r="6.2"/><line x1="15.1" y1="15.1" x2="20.2" y2="20.2"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Умный поиск</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="search-demo"><span class="search-demo__q" id="typer">мини карта</span><span class="search-demo__arrow">→</span><span class="search-demo__a" id="typer-out">Minimap</span></div>
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/search.png"><source data-src="assets/cards/search.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/search.mp4" type="video/mp4"></video>
                 </div>
                 <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Понимает по-русски и в чужой раскладке</h3>
-                  <p class="magic-bento__description">«мини карта» найдёт Minimap, а «зкщьштутсу» найдёт Prominence.</p>
+                  <h3 class="magic-bento__title">Поиск по-русски</h3>
+                  <p class="magic-bento__description">Понимает транслит и чужую раскладку.</p>
                 </div>
               </div>
               <span class="magic-bento__rim"></span>
               <span class="magic-bento__border"></span>
             </a>
           </div>
-
-          <!-- Card 6: Integration Hub (Loaders + Auto-updater) — 4 columns wide, closes the grid -->
-          <div class="magic-bento__cell magic-bento__cell--wide" style="grid-column: span 4; grid-row: span 1;">
-            <a class="magic-bento__card" href="#faq-updates" data-clickable>
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#download" data-clickable>
               <span class="magic-bento__light"></span>
-              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
               <div class="magic-bento__content">
-                <div class="magic-bento__header">
-                  <span class="magic-bento__icon">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 3.5 20.5 7.8 12 12 3.5 7.8"/><polyline points="3.5 12.2 12 16.5 20.5 12.2"/></svg>
-                  </span>
-                  <span class="magic-bento__label">Все загрузчики + Автообновление</span>
-                </div>
-                <div class="magic-bento__visual" aria-hidden="true">
-                  <div class="magic-bento__hub">
-                    <svg class="magic-bento__hub-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                      <line x1="18" y1="24" x2="50" y2="51" pathLength="1" />
-                      <line x1="82" y1="24" x2="50" y2="51" pathLength="1" />
-                      <line x1="18" y1="78" x2="50" y2="51" pathLength="1" />
-                      <line x1="82" y1="78" x2="50" y2="51" pathLength="1" />
-                    </svg>
-                    <span class="magic-bento__packet" style="--x:18%; --y:24%; --i:0"></span>
-                    <span class="magic-bento__packet" style="--x:82%; --y:24%; --i:1"></span>
-                    <span class="magic-bento__packet" style="--x:18%; --y:78%; --i:2"></span>
-                    <span class="magic-bento__packet" style="--x:82%; --y:78%; --i:3"></span>
-                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:18%; --y:24%; --s:26px; --i:1">Fg</span>
-                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:82%; --y:24%; --s:26px; --i:2">Fb</span>
-                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:18%; --y:78%; --s:26px; --i:3">NF</span>
-                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:82%; --y:78%; --s:26px; --i:4">Qt</span>
-                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:50%; --y:51%; --s:34px; --i:0">S</span>
-                  </div>
+                <div class="magic-bento__visual magic-bento__media" aria-hidden="true">
+                  <video class="magic-bento__video" muted loop playsinline preload="none" poster="assets/cards/loaders.png"><source data-src="assets/cards/loaders.webm" type="video/webm; codecs=vp9"><source data-src="assets/cards/loaders.mp4" type="video/mp4"></video>
                 </div>
                 <div class="magic-bento__text">
-                  <h3 class="magic-bento__title">Forge, Fabric, NeoForge, Quilt</h3>
-                  <p class="magic-bento__description">Изолированные сборки и обновление лаунчера с сохранением всех миров и ника.</p>
+                  <h3 class="magic-bento__title">Любой загрузчик</h3>
+                  <p class="magic-bento__description">Forge, NeoForge, Fabric и Quilt — каждая сборка в своей папке.</p>
                 </div>
               </div>
               <span class="magic-bento__rim"></span>
@@ -398,7 +232,7 @@
     <section class="download" id="download">
       <div class="wrap">
         <h2 class="h2 reveal" data-blur-text>Скачать Sad Launcher.</h2>
-        <p class="sub reveal">Бесплатно и без регистрации. Автоустановщик сам поставит лаунчер, создаст ярлыки и подготовит всё к запуску.</p>
+        <p class="sub reveal">Бесплатно и без регистрации.</p>
         <div class="os" id="spotlight-cards">
           <article class="os__card spotlight-card reveal" data-os="windows" data-spotlight-card>
             <span class="spotlight-card__light" aria-hidden="true"></span>
@@ -409,7 +243,7 @@
             </div>
             <p class="os__meta">Windows 10 и 11, 64 бит</p>
             <a class="btn btn--light" href="https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe" download>Скачать установщик</a>
-            <p class="os__note">Создаёт ярлык на рабочем столе и в меню «Пуск». При выходе новой версии обновляется одним нажатием без потери миров.</p>
+            <p class="os__note">Ярлык на рабочем столе и в «Пуске». Обновляется в одно нажатие, миры остаются.</p>
             <span class="spotlight-card__border" aria-hidden="true"></span>
             <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
@@ -423,7 +257,7 @@
             </div>
             <p class="os__meta">Apple Silicon и Intel</p>
             <a class="btn btn--light" href="download/install-macos.command" download>Скачать для macOS</a>
-            <p class="os__note">Автоскрипт скачивает и устанавливает <code>Sad Launcher.app</code> в Программы без ручной сборки.</p>
+            <p class="os__note">Скрипт ставит <code>Sad Launcher.app</code> в Программы.</p>
             <span class="spotlight-card__border" aria-hidden="true"></span>
             <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
@@ -449,7 +283,7 @@
                 <span>Копировать</span>
               </button>
             </div>
-            <p class="os__note">Ставит бинарник и создаёт ярлык в меню приложений автоматически.</p>
+            <p class="os__note">Ставит программу и ярлык в меню приложений.</p>
             <span class="spotlight-card__border" aria-hidden="true"></span>
             <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
@@ -693,6 +527,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
-  <script src="app.js?v=20261117c" defer></script>
+  <script src="app.js?v=20261118a" defer></script>
 </body>
 </html>

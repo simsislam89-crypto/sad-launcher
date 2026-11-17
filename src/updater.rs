@@ -132,6 +132,11 @@ pub fn parse_version_json(json: &str) -> Option<UpdateInfo> {
 /// Checks GitHub for a newer release or `site/version.json`.
 /// Silent on offline / 404 / private repo.
 pub async fn check(client: &reqwest::Client) -> Option<UpdateInfo> {
+    check_against(client, VERSION).await
+}
+
+/// [`check`] against an explicit current version (live end-to-end test).
+pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<UpdateInfo> {
     let release_url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
     if let Ok(resp) = client
         .get(&release_url)
@@ -143,7 +148,7 @@ pub async fn check(client: &reqwest::Client) -> Option<UpdateInfo> {
         if resp.status().is_success() {
             if let Ok(text) = resp.text().await {
                 if let Some(info) = parse_release_json(&text) {
-                    if is_newer(&info.version, VERSION) {
+                    if is_newer(&info.version, current) {
                         return Some(info);
                     }
                 }
@@ -152,28 +157,28 @@ pub async fn check(client: &reqwest::Client) -> Option<UpdateInfo> {
     }
 
     let raw_url = format!("https://raw.githubusercontent.com/{GITHUB_REPO}/main/site/version.json");
-    if let Some(info) = fetch_version_json(client, &raw_url).await {
+    if let Some(info) = fetch_version_json(client, &raw_url, current).await {
         return Some(info);
     }
 
     let site = crate::config::SITE_URL.trim().trim_end_matches('/');
     if !site.is_empty() {
         let site_url = format!("{site}/version.json");
-        if let Some(info) = fetch_version_json(client, &site_url).await {
+        if let Some(info) = fetch_version_json(client, &site_url, current).await {
             return Some(info);
         }
     }
     None
 }
 
-async fn fetch_version_json(client: &reqwest::Client, url: &str) -> Option<UpdateInfo> {
+async fn fetch_version_json(client: &reqwest::Client, url: &str, current: &str) -> Option<UpdateInfo> {
     let resp = client.get(url).timeout(Duration::from_secs(6)).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
     let text = resp.text().await.ok()?;
     let mut info = parse_version_json(&text)?;
-    if !is_newer(&info.version, VERSION) {
+    if !is_newer(&info.version, current) {
         return None;
     }
     if info.size_bytes == 0 {
@@ -208,9 +213,10 @@ pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
     }
     send(UpdateEvent::Stage("Скачиваю установщик…".into()));
 
+    // No total timeout: 18 MB at 100 KB/s takes 3 minutes and used to be
+    // cut off at 180 s. A stalled read is still cut by the client.
     let resp = client
         .get(&info.url)
-        .timeout(Duration::from_secs(180))
         .send()
         .await
         .context("Не удалось скачать обновление с GitHub")?;
@@ -253,6 +259,7 @@ pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
             bail!("Файл обновления превысил лимит размера");
         }
         file.write_all(&bytes).context("Ошибка записи файла обновления")?;
+        crate::net::count(bytes.len());
         send(UpdateEvent::Progress { done, total });
     }
     file.flush()?;
@@ -304,6 +311,51 @@ mod tests {
         ));
         assert!(!is_allowed_url("http://github.com/a/b.exe"));
         assert!(!is_allowed_url("https://evil.example.com/setup.exe"));
+    }
+
+    /// `cargo test --release live_update_e2e -- --ignored --nocapture`:
+    /// pretends to be 0.0.1, finds the published update, downloads the real
+    /// installer and lets it `--update` a dummy exe in %TEMP%; the relaunched
+    /// launcher takes a screenshot and closes itself (MADRID_DEV_SHOT).
+    #[test]
+    #[ignore]
+    fn live_update_e2e() {
+        let dir = std::env::temp_dir().join("sad-update-e2e");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("Sad Launcher.exe");
+        std::fs::write(&target, b"old launcher").unwrap();
+        let shot = dir.join("relaunched.png");
+        let rt = crate::net::rt();
+        let client = crate::net::client();
+        let info = rt.block_on(check_against(&client, "0.0.1")).expect("update found");
+        println!("found {} ({} bytes) at {}", info.version, info.size_bytes, info.url);
+        let cancel = AtomicBool::new(false);
+        let installer = rt
+            .block_on(download_installer(&client, &info, &cancel, &mut |_| {}))
+            .expect("installer downloaded");
+        println!("installer {} bytes", std::fs::metadata(&installer).unwrap().len());
+        let status = std::process::Command::new(&installer)
+            .arg("--update")
+            .arg(&target)
+            .env("MADRID_SECOND_INSTANCE", "1")
+            .env("MADRID_DEV_TAB", "play")
+            .env("MADRID_DEV_SHOT", &shot)
+            .env("MADRID_DEV_SHOT_DELAY", "4")
+            .status()
+            .expect("installer ran");
+        assert!(status.success());
+        let new = std::fs::read(&target).unwrap();
+        assert!(new.len() > 1_000_000 && &new[..2] == b"MZ", "exe replaced");
+        println!("replaced: {} bytes", new.len());
+        for _ in 0..60 {
+            if shot.exists() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        assert!(shot.exists(), "relaunched launcher drew a frame");
+        println!("relaunched OK, screenshot {}", shot.display());
     }
 
     #[test]

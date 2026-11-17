@@ -622,6 +622,7 @@ pub struct Launcher {
     pub mods_at: Instant,
     mods_stamp: Option<(PathBuf, Option<std::time::SystemTime>)>,
     mods_full_at: Instant,
+    update_checked_at: Instant,
     /// Last measured data-folder size; filled by a background walk.
     pub storage_bytes: Arc<std::sync::atomic::AtomicU64>,
     storage_busy: Arc<AtomicBool>,
@@ -1187,6 +1188,7 @@ impl Launcher {
             mods_at: Instant::now() - Duration::from_secs(3),
             mods_stamp: None,
             mods_full_at: Instant::now(),
+            update_checked_at: Instant::now(),
             storage_bytes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             storage_busy: Arc::new(AtomicBool::new(false)),
             storage_at: Instant::now() - Duration::from_secs(5),
@@ -1283,18 +1285,26 @@ impl Launcher {
             detail: None,
         });
         crate::updater::cleanup_temp_installer();
-        let dev_copy = std::env::var_os("MADRID_SECOND_INSTANCE").is_some();
-        if !dev_copy || std::env::var_os("MADRID_DEV_UPDATE").is_some() {
-            let (utx, urx) = std::sync::mpsc::channel();
-            app.update_rx = Some(urx);
-            let uctx = ctx.clone();
-            net::spawn(async move {
-                let found = crate::updater::check(&net::client()).await;
-                let _ = utx.send(found);
-                uctx.request_repaint();
-            });
-        }
+        app.check_update(&ctx);
         app
+    }
+
+    /// Asks GitHub for a newer version: at start-up, then every 6 hours for
+    /// a launcher left open (the user hears about a release without restart).
+    fn check_update(&mut self, ctx: &egui::Context) {
+        let dev_copy = std::env::var_os("MADRID_SECOND_INSTANCE").is_some();
+        if dev_copy && std::env::var_os("MADRID_DEV_UPDATE").is_none() {
+            return;
+        }
+        self.update_checked_at = Instant::now();
+        let (utx, urx) = std::sync::mpsc::channel();
+        self.update_rx = Some(urx);
+        let uctx = ctx.clone();
+        net::spawn(async move {
+            let found = crate::updater::check(&net::client()).await;
+            let _ = utx.send(found);
+            uctx.request_repaint();
+        });
     }
 
     pub fn save_cfg(&self) {
@@ -2329,6 +2339,15 @@ impl Launcher {
                 Err(TryRecvError::Empty) => {}
             }
         }
+        if self.update_info.is_none()
+            && self.update_rx.is_none()
+            && self.update_task.is_none()
+            && self.update_checked_at.elapsed() > Duration::from_secs(6 * 3600)
+        {
+            self.check_update(ctx);
+        }
+        // Idle windows still wake for the next check (no busy repaint).
+        ctx.request_repaint_after(Duration::from_secs(6 * 3600));
         let mut update_ready: Option<PathBuf> = None;
         let mut update_err: Option<String> = None;
         if let Some(task) = self.update_task.as_mut() {
@@ -2345,8 +2364,11 @@ impl Launcher {
             if let Ok(cur_exe) = std::env::current_exe() {
                 match crate::updater::launch_installer_update(&installer, &cur_exe) {
                     Ok(_) => {
+                        // A normal close: main() stops the hosted server and
+                        // on_exit releases the UPnP port (exit(0) skipped both
+                        // and left a Java server running). The installer waits
+                        // for the exe to unlock.
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                        std::process::exit(0);
                     }
                     Err(e) => self.toast(format!("{e:#}")),
                 }

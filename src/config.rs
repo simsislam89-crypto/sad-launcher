@@ -8,7 +8,9 @@ pub const APP_TITLE: &str = "Sad Launcher";
 /// Name used before v0.7 — its data folder, shortcut and autostart value
 /// are moved over once (`migrate_legacy`).
 pub const LEGACY_NAME: &str = "LLM Launcher Madrid";
-pub const VERSION: &str = "0.7.0";
+/// One source of truth: Cargo.toml. (Was a second hand-written copy — a bump
+/// in one place only made every user see «update available» forever.)
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GITHUB_REPO: &str = "simsislam89-crypto/sad-launcher";
 /// The launcher's website hosted via Botkeep / custom domain.
 pub const SITE_URL: &str = "https://rkt5jy.bot-keep.xyz";

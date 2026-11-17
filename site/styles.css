@@ -2218,3 +2218,66 @@ code {
   .magic-bento__cell--wide { grid-column: span 1 !important; }
   .magic-bento__cell--wide .magic-bento__content { display: flex; }
 }
+
+/* Card clips (Remotion, video/): black background blended away with
+   `screen`, so only the ink shows on the glass card. */
+.magic-bento__media {
+  padding: 0;
+  min-height: 0;
+}
+.magic-bento__video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+.magic-bento__title {
+  font-size: 18px;
+  letter-spacing: -0.015em;
+}
+/* One or two lines of copy: every clip gets the same box. */
+.magic-bento__description {
+  line-height: 1.45;
+  min-height: 2.9em;
+}
+
+/* ---- Touch & phones ------------------------------------------------------
+   No blue tap squares or mouse-click focus boxes. Keyboard focus stays
+   visible, drawn in the site's ink instead of the browser's blue. */
+html { -webkit-tap-highlight-color: transparent; }
+a, button, summary, input, label, video, [role="button"], [data-clickable] {
+  -webkit-tap-highlight-color: transparent;
+}
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid rgba(241, 241, 238, 0.85);
+  outline-offset: 3px;
+}
+input:focus-visible { outline: none; }
+a, button, .btn, .chip, .dock__item, .stf-chip, .stf-btn, .magic-bento__card {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+@media (pointer: coarse) {
+  .btn--sm, .nav__cta, .os__copy { min-height: 44px; }
+  .foot__links a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px; }
+}
+.os__pill { font-size: 12px; }
+
+@media (max-width: 600px) {
+  .hero__ctas {
+    flex-direction: column;
+    align-items: stretch;
+    width: min(100%, 340px);
+    margin-inline: auto;
+    gap: 10px;
+  }
+  .hero__ctas .btn { min-height: 50px; justify-content: center; }
+  .lead { max-width: 32ch; margin-inline: auto; }
+  .magic-bento__card { padding: 18px; }
+  .magic-bento__media { min-height: 150px; }
+  .stf-row { gap: 14px; }
+}
