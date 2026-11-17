@@ -59,6 +59,18 @@ struct VersionJson {
     url: String,
 }
 
+/// The release asset this build updates itself from (names match
+/// `.github/workflows/release.yml`).
+pub const ASSET_NAME: &str = if cfg!(windows) {
+    "SadLauncherSetup.exe"
+} else if cfg!(target_os = "macos") {
+    "SadLauncher-macos-universal.tar.gz"
+} else if cfg!(target_arch = "aarch64") {
+    "sad-launcher-linux-aarch64.tar.gz"
+} else {
+    "sad-launcher-linux-x86_64.tar.gz"
+};
+
 pub fn parse_semver(raw: &str) -> Option<(u32, u32, u32)> {
     let cleaned = raw.trim().trim_start_matches(['v', 'V']);
     let core = cleaned.split(['-', '+']).next().unwrap_or(cleaned);
@@ -101,11 +113,13 @@ pub fn parse_release_json(json: &str) -> Option<UpdateInfo> {
         return None;
     }
     let version = rel.tag_name.trim().trim_start_matches(['v', 'V']).to_string();
-    let asset = rel
-        .assets
-        .iter()
-        .find(|a| a.name.eq_ignore_ascii_case("SadLauncherSetup.exe"))
-        .or_else(|| rel.assets.iter().find(|a| a.name.to_lowercase().ends_with(".exe")))?;
+    let asset = rel.assets.iter().find(|a| a.name.eq_ignore_ascii_case(ASSET_NAME)).or_else(|| {
+        if cfg!(windows) {
+            rel.assets.iter().find(|a| a.name.to_lowercase().ends_with(".exe"))
+        } else {
+            None
+        }
+    })?;
     if !is_allowed_url(&asset.browser_download_url) {
         return None;
     }
@@ -156,6 +170,10 @@ pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<Up
         }
     }
 
+    // site/version.json describes the Windows installer only.
+    if !cfg!(windows) {
+        return None;
+    }
     let raw_url = format!("https://raw.githubusercontent.com/{GITHUB_REPO}/main/site/version.json");
     if let Some(info) = fetch_version_json(client, &raw_url, current).await {
         return Some(info);
@@ -192,7 +210,7 @@ async fn fetch_version_json(client: &reqwest::Client, url: &str, current: &str) 
 }
 
 fn temp_installer_path() -> PathBuf {
-    std::env::temp_dir().join("sad-launcher-update.exe")
+    std::env::temp_dir().join(if cfg!(windows) { "sad-launcher-update.exe" } else { "sad-launcher-update.tar.gz" })
 }
 
 /// Removes any leftover installer binary from a previous self-update.
@@ -200,6 +218,7 @@ pub fn cleanup_temp_installer() {
     let p = temp_installer_path();
     let _ = std::fs::remove_file(&p);
     let _ = std::fs::remove_file(p.with_extension("exe.part"));
+    let _ = std::fs::remove_file(p.with_extension("part"));
 }
 
 pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
@@ -230,7 +249,7 @@ pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
     }
 
     let dest = temp_installer_path();
-    let part = dest.with_extension("exe.part");
+    let part = dest.with_extension("part");
     let _ = std::fs::remove_file(&part);
     let mut file = std::fs::File::create(&part).context("Не создать временный файл обновления")?;
 
@@ -265,9 +284,11 @@ pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
     file.flush()?;
     drop(file);
 
-    if done < 1_000_000 || magic != *b"MZ" {
+    // Windows: an exe (MZ). macOS/Linux: a gzip archive.
+    let expected: [u8; 2] = if cfg!(windows) { *b"MZ" } else { [0x1f, 0x8b] };
+    if done < 1_000_000 || magic != expected {
         let _ = std::fs::remove_file(&part);
-        bail!("Скачанный файл не является установщиком Windows");
+        bail!("Скачанный файл не похож на сборку Sad Launcher");
     }
 
     let _ = std::fs::remove_file(&dest);
@@ -276,12 +297,62 @@ pub async fn download_installer<F: FnMut(UpdateEvent) + Send>(
     Ok(dest)
 }
 
+#[cfg(windows)]
 pub fn launch_installer_update(installer_exe: &Path, current_exe: &Path) -> Result<()> {
     let mut cmd = std::process::Command::new(installer_exe);
     cmd.arg("--update").arg(current_exe);
     cmd.spawn()
         .map_err(|e| anyhow!("Не удалось запустить установщик обновления: {e}"))?;
     Ok(())
+}
+
+/// macOS / Linux: unpack the release archive, swap the running binary for
+/// the new one (a rename — the old inode lives on until this process exits)
+/// and start it. Data in the user's data folder is untouched.
+#[cfg(not(windows))]
+pub fn launch_installer_update(archive: &Path, current_exe: &Path) -> Result<()> {
+    let stage = std::env::temp_dir().join("sad-launcher-update");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(&stage)?;
+    let out = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(archive)
+        .arg("-C")
+        .arg(&stage)
+        .output()
+        .context("Не запустить tar")?;
+    if !out.status.success() {
+        bail!("Архив обновления не распаковался");
+    }
+    let fresh = find_binary(&stage).context("В архиве нет sad-launcher")?;
+    let next = current_exe.with_extension("new");
+    std::fs::copy(&fresh, &next).context("Нет прав на папку лаунчера")?;
+    crate::platform::make_executable(&next);
+    std::fs::rename(&next, current_exe).context("Не заменить файл лаунчера")?;
+    let _ = std::fs::remove_dir_all(&stage);
+    let _ = std::fs::remove_file(archive);
+    std::process::Command::new(current_exe)
+        .env("MADRID_RELAUNCH_WAIT", "1")
+        .spawn()
+        .map_err(|e| anyhow!("Не удалось запустить новую версию: {e}"))?;
+    Ok(())
+}
+
+/// `sad-launcher` anywhere inside the unpacked archive (the Linux tarball
+/// has it at the top, the macOS one in `Sad Launcher.app/Contents/MacOS`).
+#[cfg(not(windows))]
+fn find_binary(dir: &Path) -> Option<PathBuf> {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_binary(&path) {
+                return Some(found);
+            }
+        } else if path.file_name().and_then(|n| n.to_str()) == Some("sad-launcher") {
+            return Some(path);
+        }
+    }
+    None
 }
 
 #[cfg(test)]

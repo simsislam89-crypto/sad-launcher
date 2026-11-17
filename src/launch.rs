@@ -439,11 +439,20 @@ fn build_args(_shared: &Arc<Shared>, cfg: &Config, resolved: &Resolved, connect:
 
     let jvm_args = match &resolved.json.arguments {
         Some(args) if !args.jvm.is_empty() => collect_args(&args.jvm),
-        _ => vec![
-            "-Djava.library.path=${natives_directory}".into(),
-            "-cp".into(),
-            "${classpath}".into(),
-        ],
+        _ => {
+            let mut legacy: Vec<String> = Vec::new();
+            // macOS: LWJGL must own the main thread or no window opens.
+            // 1.13+ version files carry this rule themselves; old ones don't.
+            if cfg!(target_os = "macos") {
+                legacy.push("-XstartOnFirstThread".into());
+            }
+            legacy.extend([
+                "-Djava.library.path=${natives_directory}".into(),
+                "-cp".into(),
+                "${classpath}".into(),
+            ]);
+            legacy
+        }
     };
     let jar_name = resolved
         .client_jar

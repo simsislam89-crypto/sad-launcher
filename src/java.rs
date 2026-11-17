@@ -367,6 +367,12 @@ fn runtime_urls(major: u32) -> Vec<String> {
         let ms_os = if os == "mac" { "macos" } else { os };
         urls.push(format!("https://aka.ms/download-jdk/microsoft-jdk-{major}-{ms_os}-{arch}.{ext}"));
     }
+    // Apple Silicon: Temurin ships no arm64 Java 8 for macOS; the x64 build
+    // runs under Rosetta (and old LWJGL 2 natives are x64-only anyway).
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        urls.push(format!("https://api.adoptium.net/v3/binary/latest/{major}/ga/mac/x64/jre/hotspot/normal/eclipse?project=jdk"));
+        urls.push(format!("https://api.adoptium.net/v3/binary/latest/{major}/ga/mac/x64/jdk/hotspot/normal/eclipse?project=jdk"));
+    }
     urls
 }
 

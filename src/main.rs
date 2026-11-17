@@ -44,7 +44,18 @@ fn main() {
     let mut cfg = config::load();
 
     // One window per machine: a second copy just brings the first forward.
-    let _instance = util::lock_single_instance();
+    let mut _instance = util::lock_single_instance();
+    // Started by the self-updater while the old copy is still closing
+    // (stopping its server): wait for it instead of quitting.
+    if _instance.is_none() && std::env::var_os("MADRID_RELAUNCH_WAIT").is_some() {
+        for _ in 0..120 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            _instance = util::lock_single_instance();
+            if _instance.is_some() {
+                break;
+            }
+        }
+    }
     if _instance.is_none() && !dev_copy {
         util::focus_window(config::APP_TITLE);
         return;
