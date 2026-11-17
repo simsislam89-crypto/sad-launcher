@@ -1,12 +1,11 @@
-# GitHub Pages: publishes site/ on every push to main.
-# Enable once: Settings -> Pages -> Source: GitHub Actions
-# (on the free plan Pages needs a public repository).
+# GitHub Pages: publishes site/. Manual run (Actions -> Сайт -> Run workflow)
+# until Pages is enabled: Settings -> Pages -> Source: GitHub Actions.
+# On the free plan Pages needs a public repository; after enabling it, add
+#   push: { branches: [main], paths: ["site/**"] }
+# under "on:" to publish on every push.
 name: Сайт
 
 on:
-  push:
-    branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
