@@ -1,0 +1,15 @@
+# Netlify: static site from site/, no build step.
+[build]
+  publish = "site"
+  command = ""
+
+[[headers]]
+  for = "/download/*"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+    Content-Disposition = "attachment; filename=SadLauncherSetup.exe"
+
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"

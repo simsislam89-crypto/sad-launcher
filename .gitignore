@@ -1,0 +1,19 @@
+# Rust build output
+/target/
+
+# Built binaries in the root (rebuilt by scripts/make-dist.sh)
+/*.exe
+/assets/launcher-payload.exe
+/assets/vertdll.dll
+
+# Logs and local junk
+*.log
+*.part
+Thumbs.db
+desktop.ini
+
+# Local Claude settings (skills and launch.json stay tracked)
+/.claude/settings.local.json
+
+# The site serves the installer: keep exactly this one binary
+!/site/download/SadLauncherSetup.exe

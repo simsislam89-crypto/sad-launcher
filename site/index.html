@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Sad Launcher</title>
+  <meta name="description" content="Лаунчер Minecraft на Rust: модпаки в одно нажатие, свой сервер для друзей и Java, которая ставится сама.">
+  <meta name="theme-color" content="#0b0b0d">
+  <link rel="icon" type="image/png" href="assets/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#main">К содержимому</a>
+
+  <header class="nav" id="top">
+    <div class="nav__inner glass">
+      <a class="brand" href="#top" aria-label="Sad Launcher, наверх">
+        <span>Sad Launcher</span>
+      </a>
+      <nav class="nav__links" aria-label="Разделы">
+        <a href="#inside">Возможности</a>
+        <a href="#speed">Скорость</a>
+        <a href="#faq">Вопросы</a>
+      </nav>
+      <a class="btn btn--light btn--sm" href="#download">Скачать</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- Hero: procedural voxel terrain (canvas), cinematic like a full-bleed landscape -->
+    <section class="hero">
+      <canvas class="hero__terrain" id="terrain" aria-hidden="true"></canvas>
+      <div class="hero__shade" aria-hidden="true"></div>
+      <div class="hero__content wrap">
+        <h1 class="display reveal">Майнкрафт,<br><em>который просто</em> запускается.</h1>
+        <p class="lead reveal" style="--d:1">Модпаки в одно нажатие, свой сервер для друзей и Java, которая ставится сама. Без регистрации.</p>
+        <div class="hero__ctas reveal" style="--d:2">
+          <a class="btn btn--light magnet" href="#download" data-download>Скачать для Windows</a>
+          <a class="btn btn--glass" href="#inside">Посмотреть</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Container scroll: the screenshot tilts flat as it scrolls in -->
+    <section class="showcase" id="inside">
+      <div class="wrap">
+        <h2 class="h2 reveal">Всё на одном экране.</h2>
+        <p class="sub reveal" style="--d:1">Каталог Modrinth и CurseForge, сборки, сервер и настройки. Чёрно-белый интерфейс без лишних окон.</p>
+      </div>
+      <div class="tilt" id="tilt">
+        <figure class="tilt__frame glass">
+          <img src="assets/shot-mods.png" width="1120" height="720" alt="Каталог модов Sad Launcher: сетка карточек с кнопками «Скачать» и «Добавить»" loading="lazy" decoding="async">
+        </figure>
+      </div>
+    </section>
+
+    <div class="marquee" aria-label="Поддерживается: Forge, NeoForge, Fabric, Quilt, Vanilla, Modrinth, CurseForge">
+      <div class="marquee__track" aria-hidden="true">
+        <span>Forge</span><span>NeoForge</span><span>Fabric</span><span>Quilt</span><span>Vanilla</span><span>Modrinth</span><span>CurseForge</span>
+        <span>Forge</span><span>NeoForge</span><span>Fabric</span><span>Quilt</span><span>Vanilla</span><span>Modrinth</span><span>CurseForge</span>
+      </div>
+    </div>
+
+    <!-- Dark narrative band with real measured numbers -->
+    <section class="band" id="speed">
+      <div class="wrap">
+        <h2 class="h2 reveal">Модпак ставится за секунды.</h2>
+        <p class="sub reveal" style="--d:1">Архив качается частями в несколько потоков, настройки пака распаковываются прямо в сборку, пока докачиваются моды.</p>
+        <div class="stats">
+          <div class="stat reveal" style="--d:1">
+            <span class="stat__num"><span data-count="4.4" data-dec="1">4,4</span> с</span>
+            <span class="stat__txt">пак Additive, 54 мода и 51 МБ. Наш замер на канале 100 Мбит/с</span>
+          </div>
+          <div class="stat reveal" style="--d:2">
+            <span class="stat__num"><span data-count="8">8</span> потоков</span>
+            <span class="stat__txt">на распаковку и удаление: сборка исчезает мгновенно, прогресс виден</span>
+          </div>
+          <div class="stat reveal" style="--d:3">
+            <span class="stat__num"><span data-count="0">0</span> повторов</span>
+            <span class="stat__txt">моды, которые уже есть в другой сборке, не качаются заново</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bento: five features, five cells -->
+    <section class="features">
+      <div class="wrap">
+        <h2 class="h2 reveal">Что внутри.</h2>
+        <div class="bento">
+          <article class="cell cell--wide spot glass reveal">
+            <div class="cell__text">
+              <h3>Модпак становится отдельной сборкой</h3>
+              <p>Любой загрузчик и версия Minecraft. Моды, миры и настройки разных паков не смешиваются.</p>
+            </div>
+            <img class="cell__img" src="assets/shot-build.png" width="1120" height="720" alt="Вкладка «Сборка» со списком модов и кнопками «Удалить»" loading="lazy" decoding="async">
+          </article>
+          <article class="cell spot glass reveal" style="--d:1">
+            <h3>Свой сервер</h3>
+            <p>Forge-сервер поднимается кнопкой. Друзья заходят по коду комнаты из пяти цифр.</p>
+          </article>
+          <article class="cell cell--tint spot glass reveal" style="--d:2">
+            <h3>Java ставится сама</h3>
+            <p>Нужная версия скачивается при первом запуске сборки. Ничего не надо искать.</p>
+          </article>
+          <article class="cell spot glass reveal" style="--d:1">
+            <h3>Чинит вылеты до запуска</h3>
+            <p>Отключает моды не под тот загрузчик и сам докачивает недостающие зависимости.</p>
+          </article>
+          <article class="cell cell--wide2 spot glass reveal" style="--d:2">
+            <h3>Поиск понимает по-русски</h3>
+            <p>«мини карта» найдёт Minimap, а «зкщьштутсу», набранное не в той раскладке, найдёт Prominence.</p>
+            <div class="search-demo" aria-hidden="true"><span class="search-demo__q" id="typer">мини карта</span><span class="search-demo__arrow">→</span><span class="search-demo__a" id="typer-out">Minimap</span></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Download: OS-aware, honest about platforms -->
+    <section class="download" id="download">
+      <div class="wrap">
+        <h2 class="h2 reveal">Скачать Sad Launcher.</h2>
+        <p class="sub reveal" style="--d:1">Бесплатно и без регистрации. Установщик сам создаст ярлыки на рабочем столе и в меню «Пуск».</p>
+        <div class="os">
+          <article class="os__card glass spot reveal" data-os="windows">
+            <h3>Windows</h3>
+            <p class="os__meta">Windows 10 и 11, 64 бит</p>
+            <a class="btn btn--light" href="download/SadLauncherSetup.exe" download>Скачать установщик</a>
+          </article>
+          <article class="os__card glass spot reveal" data-os="linux" style="--d:1">
+            <h3>Linux</h3>
+            <p class="os__meta">Сборка в разработке</p>
+            <span class="btn btn--glass is-off" aria-disabled="true">Скоро</span>
+          </article>
+          <article class="os__card glass spot reveal" data-os="mac" style="--d:2">
+            <h3>macOS</h3>
+            <p class="os__meta">Сборка в разработке</p>
+            <span class="btn btn--glass is-off" aria-disabled="true">Скоро</span>
+          </article>
+        </div>
+        <p class="os__hint" id="os-hint" hidden></p>
+      </div>
+    </section>
+
+    <section class="faq" id="faq">
+      <div class="wrap wrap--narrow">
+        <h2 class="h2 reveal">Вопросы.</h2>
+        <details class="reveal">
+          <summary>Нужен аккаунт Microsoft?</summary>
+          <p>Нет. Играть можно по нику: на своём сервере и у друзей в комнате. Ник от 3 до 16 символов.</p>
+        </details>
+        <details class="reveal">
+          <summary>Где хранятся файлы?</summary>
+          <p>В папке <code>%APPDATA%\Sad Launcher</code>. Кнопка «Удалить всё» в настройках убирает лаунчер, сборки и ярлыки целиком.</p>
+        </details>
+        <details class="reveal">
+          <summary>Пойдёт на слабом компьютере?</summary>
+          <p>Лаунчер в простое занимает около 5 МБ памяти и сворачивается, пока идёт игра. Игра получает приоритет и дискретную видеокарту.</p>
+        </details>
+        <details class="reveal">
+          <summary>Я обновился со старой версии. Миры пропадут?</summary>
+          <p>Нет. Папка прежнего лаунчера переносится при первом запуске, вместе с мирами, сборками и настройками.</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <div class="wrap foot__inner">
+      <a class="brand" href="#top"><span>Sad Launcher</span></a>
+      <p>Не связан с Mojang и Microsoft. Minecraft является товарным знаком Mojang AB.</p>
+    </div>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
