@@ -59,6 +59,7 @@ pub struct EffectsConfig {
     pub anti_afk_bind: String,
     pub autoclicker: bool,
     pub autoclicker_cps: f32,
+    pub autoclicker_ms: u32,
     pub autoclicker_rmb: bool,
     pub autoclicker_bind: String,
 }
@@ -104,7 +105,8 @@ impl Default for EffectsConfig {
             anti_afk_secs: 60,
             anti_afk_bind: "F7".into(),
             autoclicker: false,
-            autoclicker_cps: 10.0,
+            autoclicker_cps: 100.0,
+            autoclicker_ms: 10,
             autoclicker_rmb: false,
             autoclicker_bind: "F6".into(),
         }

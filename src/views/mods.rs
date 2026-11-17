@@ -11,6 +11,14 @@ use std::time::{Duration, Instant};
 
 const CELL: Vec2 = Vec2::new(168.0, 252.0);
 
+fn grid_cell_size(avail_w: f32) -> Vec2 {
+    let gap = 10.0;
+    let min_w = 166.0;
+    let cols = ((avail_w + gap) / (min_w + gap)).floor().max(1.0);
+    let cell_w = ((avail_w - gap * (cols - 1.0)) / cols - 0.5).floor().max(min_w);
+    Vec2::new(cell_w, CELL.y)
+}
+
 impl Launcher {
     /// Active download card with a cancel button. Returns true on cancel.
     fn download_card(&mut self, ui: &mut Ui, skin: &Skin) -> bool {
@@ -281,10 +289,11 @@ impl Launcher {
                     widgets::section_label(ui, skin, &format!("{label} · {}", results.len()));
                     ui.add_space(6.0);
                     let ctx = ui.ctx().clone();
+                    let cell_sz = grid_cell_size(ui.available_width());
                     ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing = Vec2::new(10.0, 10.0);
                         for (i, hit) in results.iter().enumerate() {
-                            let (slot, resp) = ui.allocate_exact_size(CELL, Sense::click());
+                            let (slot, resp) = ui.allocate_exact_size(cell_sz, Sense::click());
                             if !ui.is_rect_visible(slot) {
                                 // Off-screen cards cost nothing: no icon
                                 // download, no pack lookup, no painting.
@@ -623,11 +632,12 @@ impl Launcher {
 /// Placeholder tiles with a soft breathing pulse while the first page loads.
 fn skeleton_grid(ui: &mut Ui, skin: &Skin, count: usize) {
     let t = ui.input(|i| i.time) as f32;
+    let cell_sz = grid_cell_size(ui.available_width());
     ui.ctx().request_repaint_after(Duration::from_millis(33));
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(10.0, 10.0);
         for i in 0..count {
-            let (rect, _) = ui.allocate_exact_size(CELL, Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(cell_sz, Sense::hover());
             let wave = if theme::reduced_motion() {
                 0.5
             } else {
@@ -637,13 +647,13 @@ fn skeleton_grid(ui: &mut Ui, skin: &Skin, count: usize) {
             let p = ui.painter();
             p.rect_filled(rect, CornerRadius::same(14), skin.fill().gamma_multiply(0.6));
             p.rect_filled(
-                Rect::from_min_size(rect.min + Vec2::new(12.0, 12.0), Vec2::new(CELL.x - 24.0, 120.0)),
+                Rect::from_min_size(rect.min + Vec2::new(12.0, 12.0), Vec2::new(rect.width() - 24.0, 120.0)),
                 CornerRadius::same(10),
                 fill,
             );
             for (y, w) in [(144.0, 0.7), (162.0, 0.9), (178.0, 0.45)] {
                 p.rect_filled(
-                    Rect::from_min_size(rect.min + Vec2::new(12.0, y), Vec2::new((CELL.x - 24.0) * w, 8.0)),
+                    Rect::from_min_size(rect.min + Vec2::new(12.0, y), Vec2::new((rect.width() - 24.0) * w, 8.0)),
                     CornerRadius::same(4),
                     fill,
                 );
@@ -769,8 +779,9 @@ fn hit_card(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
 
+    let cell_w = slot.width();
     // Icon grows 3% under the pointer — the tile answers before the click.
-    let side = (CELL.x - 24.0) * (1.0 + 0.03 * hover);
+    let side = (cell_w - 24.0) * (1.0 + 0.03 * hover);
     let irect = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 12.0 + 60.0), Vec2::new(side, 120.0 * (1.0 + 0.03 * hover)));
     if let Some(tex) = icon {
         // Icons fade in as they arrive instead of popping.
@@ -800,7 +811,7 @@ fn hit_card(
     // Text lines are measured with the real font and end with «…» —
     // nothing runs into the next line or under the buttons.
     let ty = rect.top() + 140.0;
-    let w = CELL.x - 24.0;
+    let w = cell_w - 24.0;
     let x = rect.left() + 12.0;
     widgets::text_fit(&p, Pos2::new(x, ty), Align2::LEFT_TOP, &hit.title, theme::display(13.5), skin.ink(), w);
     widgets::text_fit(&p, Pos2::new(x, ty + 20.0), Align2::LEFT_TOP, &hit.summary, theme::body(11.0), skin.dim(), w);
@@ -823,11 +834,12 @@ fn hit_card(
         widgets::text_fit(&p, Pos2::new(x + 13.0, ty + 55.0), Align2::LEFT_TOP, &meta_txt, theme::mono(10.5), skin.faint(), (w - 13.0).max(20.0));
     }
 
+    let _ = busy;
     let mut add = false;
     let mut install = false;
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(Rect::from_min_size(Pos2::new(rect.left() + 10.0, rect.bottom() - 36.0), Vec2::new(CELL.x - 20.0, 26.0)))
+            .max_rect(Rect::from_min_size(Pos2::new(rect.left() + 10.0, rect.bottom() - 36.0), Vec2::new(cell_w - 20.0, 26.0)))
             .layout(Layout::right_to_left(Align::Center)),
     );
     child.multiply_opacity(0.15 + 0.85 * appear);
@@ -838,14 +850,14 @@ fn hit_card(
     } else {
         ("Скачать", "Скачать в активную сборку прямо сейчас")
     };
-    if widgets::button_sized(&mut child, skin, main_label, Btn::Primary, !busy, 26.0, 11.0, 10.0)
+    if widgets::button_sized(&mut child, skin, main_label, Btn::Primary, true, 26.0, 11.0, 10.0)
         .on_hover_text(main_hint)
         .clicked()
     {
         install = true;
     }
     if !is_pack
-        && widgets::button_sized(&mut child, skin, "Добавить", Btn::Outline, !busy, 26.0, 11.0, 9.0)
+        && widgets::button_sized(&mut child, skin, "Добавить", Btn::Outline, true, 26.0, 11.0, 9.0)
             .on_hover_text("Добавить в список своей сборки — поставишь всё разом на вкладке «Сборка»")
             .clicked()
     {

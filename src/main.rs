@@ -78,7 +78,7 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title(title)
-            .with_inner_size([1120.0, 720.0])
+            .with_inner_size([1240.0, 760.0])
             .with_min_inner_size([960.0, 620.0])
             .with_transparent(true)
             .with_decorations(false)

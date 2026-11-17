@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Sad Launcher — лаунчер Minecraft на Rust</title>
-  <meta name="description" content="Лёгкий лаунчер Minecraft на Rust: модпаки в одно нажатие, игра с другом по коду, эффекты, автообновления и своя Java.">
+  <meta name="description" content="Лёгкий лаунчер Minecraft на Rust (https://rkt5jy.bot-keep.xyz): модпаки в одно нажатие, игра с другом по коду, эффекты, автокликер 10 мс, Anti-AFK и автоустановка.">
   <meta name="theme-color" content="#0b0b0d">
   <link rel="canonical" href="https://rkt5jy.bot-keep.xyz/">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://rkt5jy.bot-keep.xyz/">
   <meta property="og:title" content="Sad Launcher — лаунчер Minecraft на Rust">
-  <meta property="og:description" content="Модпаки в одно нажатие, игра с другом, встроенные эффекты, автообновление и автоустановка для Windows, macOS и Linux.">
+  <meta property="og:description" content="Модпаки в одно нажатие, игра с другом, эффекты, автокликер в миллисекундах, Anti-AFK и автоустановка для Windows, macOS и Linux.">
   <link rel="icon" type="image/png" href="assets/icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,9 +27,10 @@
         <span>Sad Launcher</span>
       </a>
       <nav class="nav__links" aria-label="Разделы">
-        <a href="#inside">Возможности</a>
+        <a href="#inside">Обзор</a>
         <a href="#speed">Скорость</a>
-        <a href="#effects">Эффекты</a>
+        <a href="#effects">Возможности</a>
+        <a href="#download">Скачать</a>
         <a href="#faq">Вопросы</a>
       </nav>
       <a class="btn btn--light btn--sm" href="#download">Скачать</a>
@@ -37,24 +38,51 @@
   </header>
 
   <main id="main">
-    <section class="hero">
+    <!-- Hero: 21st.dev GridPatternSpotlight + Radial Horizon Arc + ReactBits WebGL2 Aurora & Particles + BlurText -->
+    <section class="hero" id="hero">
+      <div class="aurora-container" aria-hidden="true">
+        <canvas class="aurora-canvas" id="aurora-canvas"></canvas>
+      </div>
+      <div class="particles-container" aria-hidden="true">
+        <canvas class="particles-canvas" id="particles-canvas"></canvas>
+      </div>
+      <div class="hero__grid-wrap" aria-hidden="true">
+        <div class="hero__grid-spot" id="hero-grid-spot"></div>
+        <svg class="hero__grid-svg" aria-hidden="true">
+          <defs>
+            <pattern id="grid-pattern" width="24" height="24" patternUnits="userSpaceOnUse">
+              <path d="M0 12H12M12 12V0M12 12H24M12 12V24" stroke="currentColor" stroke-opacity="0.16" />
+              <rect x="11" y="11" width="2" height="2" fill="currentColor" fill-opacity="0.22" />
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#grid-pattern)" />
+        </svg>
+      </div>
       <canvas class="hero__terrain" id="terrain" aria-hidden="true"></canvas>
+      <div class="hero__arc" aria-hidden="true"></div>
       <div class="hero__shade" aria-hidden="true"></div>
+
       <div class="hero__content wrap">
-        <span class="eyebrow hero-in">Rust · eframe · без регистрации</span>
-        <h1 class="display hero-in">Майнкрафт,<br><em>который просто</em> запускается.</h1>
-        <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду или в одной сети, эффекты с установкой модов и Java, которая ставится сама.</p>
+        <a class="eyebrow hero-in" href="#effects">
+          <span>Rust · eframe · Эффекты · Анти-АФК · Автокликер 10 мс</span>
+          <svg class="eyebrow__chev" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </a>
+        <h1 class="display" data-blur-text data-focus-hover="true">Майнкрафт, который просто запускается.</h1>
+        <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду или в одной сети, эффекты с автозагрузкой модов, автокликер в миллисекундах и Java, которая ставится сама.</p>
         <div class="hero__ctas hero-in">
-          <a class="btn btn--light magnet" href="download/SadLauncherSetup.exe" data-download>Скачать для Windows</a>
-          <a class="btn btn--glass" href="#inside">Посмотреть</a>
+          <a class="btn btn--light magnet" href="https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe" data-download download>Скачать для Windows</a>
+          <a class="btn btn--glass" href="#effects">Все возможности</a>
+          <a class="btn btn--glass" href="#faq">Частые вопросы</a>
         </div>
       </div>
     </section>
 
     <section class="showcase" id="inside">
       <div class="wrap">
-        <h2 class="h2 reveal">Всё на одном экране.</h2>
-        <p class="sub reveal">Каталог Modrinth и CurseForge, сборки, игра с другом, эффекты и тонкие настройки. Чёрно-белый стеклянный интерфейс без лишних окон.</p>
+        <h2 class="h2 reveal" data-blur-text>Пять карточек в ряд, всё под рукой.</h2>
+        <p class="sub reveal">Каталог Modrinth и CurseForge адаптивно заполняет всю ширину окна без пустых полей, а зажатие колёсика плавно листает списки.</p>
       </div>
       <div class="tilt" id="tilt">
         <figure class="tilt__frame glass">
@@ -72,7 +100,7 @@
 
     <section class="band" id="speed">
       <div class="wrap">
-        <h2 class="h2 reveal">Модпак ставится за секунды.</h2>
+        <h2 class="h2 reveal" data-blur-text>Модпак ставится за секунды.</h2>
         <p class="sub reveal">Архив качается частями в несколько потоков, конфиги пака распаковываются прямо в сборку, пока докачиваются моды.</p>
         <div class="stats">
           <div class="stat reveal">
@@ -80,85 +108,338 @@
             <span class="stat__txt">пак Additive, 54 мода и 51 МБ. Реальный замер на канале 100 Мбит/с</span>
           </div>
           <div class="stat reveal">
-            <span class="stat__num"><span data-count="8">8</span> потоков</span>
-            <span class="stat__txt">на распаковку и удаление: старые сборки чистятся мгновенно, прогресс виден</span>
+            <span class="stat__num"><span data-count="10">10</span> мс</span>
+            <span class="stat__txt">минимальный шаг автокликера (~100 кликов/с) с работой строго в активном окне Minecraft</span>
           </div>
           <div class="stat reveal">
-            <span class="stat__num"><span data-count="0">0</span> повторов</span>
-            <span class="stat__txt">одинаковые файлы и библиотеки между сборками не качаются заново</span>
+            <span class="stat__num"><span data-count="60">60</span> мин</span>
+            <span class="stat__txt">максимальный интервал защиты от АФК с кастомным биндом и живым таймером</span>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- ReactBits MagicBento: 6 interactive cards with proximity border glow, click wave, 3D tilt, stars, and live visuals -->
     <section class="features" id="effects">
       <div class="wrap">
-        <h2 class="h2 reveal">Что внутри.</h2>
-        <div class="bento">
-          <article class="cell cell--wide spot glass reveal">
-            <div class="cell__text">
-              <h3>Модпак становится отдельной сборкой</h3>
-              <p>Любой загрузчик и версия Minecraft. Моды, миры и настройки разных паков никогда не смешиваются.</p>
-            </div>
-            <img class="cell__img" src="assets/shot-build.png" width="1120" height="720" alt="Вкладка «Сборка» со списком модов и кнопками «Удалить»" loading="lazy" decoding="async">
-          </article>
-          <article class="cell spot glass reveal">
-            <h3>Игра с другом без возни</h3>
-            <p>Комната по 5-значному коду или прямое подключение: лаунчер сразу показывает адрес для одной сети и внешний IP по введённому порту.</p>
-          </article>
-          <article class="cell cell--tint spot glass reveal">
-            <h3>Эффекты и автоматизация</h3>
-            <p>Fullbright, чистая вода, удаление огня, тотема и тряски, загрузка нужных модов с Modrinth в 1 клик, Anti-AFK и автокликер строго внутри Minecraft.</p>
-          </article>
-          <article class="cell spot glass reveal">
-            <h3>Чинит вылеты до запуска</h3>
-            <p>Отключает моды не под тот загрузчик, сам докачивает недостающие зависимости и обновляет лаунчер без потери миров.</p>
-          </article>
-          <article class="cell cell--wide2 spot glass reveal">
-            <h3>Поиск понимает по-русски</h3>
-            <p>«мини карта» найдёт Minimap, а «зкщьштутсу», набранное не в той раскладке, найдёт Prominence.</p>
-            <div class="search-demo" aria-hidden="true"><span class="search-demo__q" id="typer">мини карта</span><span class="search-demo__arrow">→</span><span class="search-demo__a" id="typer-out">Minimap</span></div>
-          </article>
+        <h2 class="h2 reveal" data-blur-text>Что внутри лаунчера.</h2>
+        <p class="sub reveal">Наведите курсор или кликните по любой карточке — интерактивная сетка покажет живые графики, пайплайн эффектов и сеть.</p>
+
+        <div class="magic-bento" id="magic-bento" data-motion data-intro>
+          <!-- Card 1: Analytics / Speed scrubbable chart -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#speed" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Многопоточная загрузка</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="magic-bento__chart" id="mb-chart">
+                    <div class="magic-bento__figure">
+                      <span class="magic-bento__figure-value" id="mb-chart-val">54 мода · 4,4 с</span>
+                      <span class="magic-bento__figure-note" id="mb-chart-note">8 потоков</span>
+                    </div>
+                    <div class="magic-bento__plot" id="mb-plot">
+                      <svg id="mb-plot-svg" preserveAspectRatio="none" aria-hidden="true"></svg>
+                      <span class="magic-bento__scrub" id="mb-scrub"><span class="magic-bento__scrub-dot" id="mb-scrub-dot"></span></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Сборка модпака без ожидания</h3>
+                  <p class="magic-bento__description">Наведите на график: параллельное скачивание и распаковка конфигов на лету.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+
+          <!-- Card 2: Security / Toggles (Fullbright, Autoclicker 10ms, Anti-AFK) -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#download" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 7L14 16M6.4 8.4L9.2 5.6M18 3v3M16.5 4.5h3"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Вкладка «Эффекты»</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="magic-bento__shield">
+                    <div class="magic-bento__setting magic-bento__tile">
+                      <span class="magic-bento__setting-label">Fullbright + No Render</span>
+                      <span class="magic-bento__badge-green">Готово</span>
+                      <span class="magic-bento__switch" style="--i:0"></span>
+                    </div>
+                    <div class="magic-bento__setting magic-bento__tile">
+                      <span class="magic-bento__setting-label">Автокликер · 10 мс (100/с)</span>
+                      <span class="magic-bento__badge-green">Бинд F6</span>
+                      <span class="magic-bento__switch" style="--i:1"></span>
+                    </div>
+                    <div class="magic-bento__setting magic-bento__tile">
+                      <span class="magic-bento__setting-label">Анти-АФК · до 60 мин</span>
+                      <span class="magic-bento__badge-green">Бинд F7</span>
+                      <span class="magic-bento__switch" style="--i:2"></span>
+                    </div>
+                  </div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Эффекты, Анти-АФК и Автокликер в мс</h3>
+                  <p class="magic-bento__description">Работают прямо во время онлайн-игры; автокликер активен строго внутри окна Minecraft.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+
+          <!-- Card 3: Collaboration / Room + LAN & Internet dual addresses -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 2;">
+            <a class="magic-bento__card" href="#faq-friend" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Игра с другом в 1 полосу</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="magic-bento__collab magic-bento__well">
+                    <span class="magic-bento__doc-title">Порт 25565 · Оба адреса сразу</span>
+                    <div class="magic-bento__lines">
+                      <div class="magic-bento__addr-row">
+                        <span class="magic-bento__addr-tag magic-bento__addr-tag--green">Сеть</span>
+                        <code>192.168.1.69:25565</code>
+                      </div>
+                      <div class="magic-bento__addr-row">
+                        <span class="magic-bento__addr-tag">Интернет</span>
+                        <code>46.138.87.69:25565</code>
+                      </div>
+                      <span class="magic-bento__line" style="--w:88%">
+                        <span class="magic-bento__selection" style="--from:12%; --span:64%">
+                          <span class="magic-bento__caret"></span>
+                        </span>
+                      </span>
+                      <span class="magic-bento__line" style="--w:72%"></span>
+                    </div>
+                    <span class="magic-bento__cursor magic-bento__cursor--primary" style="--x:56%; --y:54%; --i:0; --path:magic-bento-path-a">
+                      <svg width="15" height="17" viewBox="0 0 16 18"><path d="M2.2 1.6 13.4 9.9c.5.4.3 1.2-.4 1.3l-4.6.6-2.2 4.2c-.3.6-1.2.5-1.4-.1L1.2 2.4c-.2-.6.5-1.1 1-.8Z"/></svg>
+                      <span class="magic-bento__cursor-name">Вы (Хост)</span>
+                    </span>
+                    <span class="magic-bento__cursor magic-bento__cursor--secondary" style="--x:22%; --y:24%; --i:1; --path:magic-bento-path-b">
+                      <svg width="15" height="17" viewBox="0 0 16 18"><path d="M2.2 1.6 13.4 9.9c.5.4.3 1.2-.4 1.3l-4.6.6-2.2 4.2c-.3.6-1.2.5-1.4-.1L1.2 2.4c-.2-.6.5-1.1 1-.8Z"/></svg>
+                      <span class="magic-bento__cursor-name">Друг · В сети</span>
+                    </span>
+                  </div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Комната по коду и 2 адреса сразу</h3>
+                  <p class="magic-bento__description">Впишите порт — лаунчер мгновенно покажет зелёный адрес для одной сети и внешний IP для интернета.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+
+          <!-- Card 4: Automation pipeline (1-click Modrinth + SadEffects.zip + Auto-heal) -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 2;">
+            <a class="magic-bento__card" href="#faq-effects" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polyline points="4.5 12.5 9.5 17.5 19.5 6.5"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Автоматический пайплайн</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="magic-bento__flow" style="--n:4">
+                    <div class="magic-bento__flow-trigger magic-bento__tile">
+                      <span class="magic-bento__flow-glyph">
+                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="8 5 19 12 8 19 8 5"/></svg>
+                      </span>
+                      <span class="magic-bento__flow-copy">
+                        <span class="magic-bento__flow-name">Применить эффекты и моды</span>
+                        <span class="magic-bento__flow-meta magic-bento__flow-hash">live · без перезапуска</span>
+                      </span>
+                    </div>
+                    <ol class="magic-bento__steps magic-bento__well">
+                      <span class="magic-bento__rail" aria-hidden="true"><span class="magic-bento__rail-fill"></span></span>
+                      <li class="magic-bento__step" style="--i:0">
+                        <span class="magic-bento__status">
+                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
+                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
+                        </span>
+                        Патч options.txt (гамма, тряска, тьма)
+                        <span class="magic-bento__step-time">2 мс</span>
+                      </li>
+                      <li class="magic-bento__step" style="--i:1">
+                        <span class="magic-bento__status">
+                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
+                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
+                        </span>
+                        Генерация ресурспака SadEffects.zip
+                        <span class="magic-bento__step-time">4 мс</span>
+                      </li>
+                      <li class="magic-bento__step" style="--i:2">
+                        <span class="magic-bento__status">
+                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
+                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
+                        </span>
+                        Докачка модов с Modrinth в 1 клик
+                        <span class="magic-bento__step-time">1,2 с</span>
+                      </li>
+                      <li class="magic-bento__step" style="--i:3">
+                        <span class="magic-bento__status">
+                          <span class="magic-bento__pending"></span><span class="magic-bento__spinner"></span>
+                          <span class="magic-bento__done"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3"><polyline points="4 12 9 17 20 6"/></svg></span>
+                        </span>
+                        Проверка зависимостей и Java
+                        <span class="magic-bento__step-time">Готово</span>
+                      </li>
+                    </ol>
+                  </div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Скачивание модов эффектов в 1 клик</h3>
+                  <p class="magic-bento__description">Никакого ручного поиска: Gamma Utils, Clear Water, NoFog и Time Changer ставятся прямо из вкладки «Эффекты».</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+
+          <!-- Card 5: Smart Russian Search -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#inside" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="10.5" cy="10.5" r="6.2"/><line x1="15.1" y1="15.1" x2="20.2" y2="20.2"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Умный поиск</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="search-demo"><span class="search-demo__q" id="typer">мини карта</span><span class="search-demo__arrow">→</span><span class="search-demo__a" id="typer-out">Minimap</span></div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Понимает по-русски и в чужой раскладке</h3>
+                  <p class="magic-bento__description">«мини карта» найдёт Minimap, а «зкщьштутсу» найдёт Prominence.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
+
+          <!-- Card 6: Integration Hub (Loaders + Auto-updater) -->
+          <div class="magic-bento__cell" style="grid-column: span 2; grid-row: span 1;">
+            <a class="magic-bento__card" href="#faq-updates" data-clickable>
+              <span class="magic-bento__light"></span>
+              <canvas class="magic-bento__stars" aria-hidden="true"></canvas>
+              <div class="magic-bento__content">
+                <div class="magic-bento__header">
+                  <span class="magic-bento__icon">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9"><polygon points="12 3.5 20.5 7.8 12 12 3.5 7.8"/><polyline points="3.5 12.2 12 16.5 20.5 12.2"/></svg>
+                  </span>
+                  <span class="magic-bento__label">Все загрузчики + Автообновление</span>
+                </div>
+                <div class="magic-bento__visual" aria-hidden="true">
+                  <div class="magic-bento__hub">
+                    <svg class="magic-bento__hub-links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                      <line x1="18" y1="24" x2="50" y2="51" pathLength="1" />
+                      <line x1="82" y1="24" x2="50" y2="51" pathLength="1" />
+                      <line x1="18" y1="78" x2="50" y2="51" pathLength="1" />
+                      <line x1="82" y1="78" x2="50" y2="51" pathLength="1" />
+                    </svg>
+                    <span class="magic-bento__packet" style="--x:18%; --y:24%; --i:0"></span>
+                    <span class="magic-bento__packet" style="--x:82%; --y:24%; --i:1"></span>
+                    <span class="magic-bento__packet" style="--x:18%; --y:78%; --i:2"></span>
+                    <span class="magic-bento__packet" style="--x:82%; --y:78%; --i:3"></span>
+                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:18%; --y:24%; --s:26px; --i:1">Fg</span>
+                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:82%; --y:24%; --s:26px; --i:2">Fb</span>
+                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:18%; --y:78%; --s:26px; --i:3">NF</span>
+                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:82%; --y:78%; --s:26px; --i:4">Qt</span>
+                    <span class="magic-bento__hub-node magic-bento__tile" style="--x:50%; --y:51%; --s:34px; --i:0">S</span>
+                  </div>
+                </div>
+                <div class="magic-bento__text">
+                  <h3 class="magic-bento__title">Forge, Fabric, NeoForge, Quilt</h3>
+                  <p class="magic-bento__description">Изолированные сборки и обновление лаунчера с сохранением всех миров и ника.</p>
+                </div>
+              </div>
+              <span class="magic-bento__rim"></span>
+              <span class="magic-bento__border"></span>
+            </a>
+          </div>
         </div>
       </div>
     </section>
 
+    <!-- Download: ReactBits SpotlightCard with proximity light sharing, SVG noise grain, and press flare -->
     <section class="download" id="download">
       <div class="wrap">
-        <h2 class="h2 reveal">Скачать Sad Launcher.</h2>
-        <p class="sub reveal">Бесплатно и без регистрации. Автоустановщик сам поставит лаунчер, ярлыки и подготовит всё к запуску.</p>
-        <div class="os">
-          <article class="os__card glass spot reveal" data-os="windows">
+        <h2 class="h2 reveal" data-blur-text>Скачать Sad Launcher.</h2>
+        <p class="sub reveal">Бесплатно и без регистрации. Автоустановщик сам поставит лаунчер, создаст ярлыки и подготовит всё к запуску.</p>
+        <div class="os" id="spotlight-cards">
+          <article class="os__card spotlight-card reveal" data-os="windows" data-spotlight-card>
+            <span class="spotlight-card__light" aria-hidden="true"></span>
+            <span class="spotlight-card__grain" aria-hidden="true"></span>
             <div class="os__head">
               <h3>Windows</h3>
-              <span class="os__pill">EXE</span>
+              <span class="os__pill">EXE · 18 МБ</span>
             </div>
             <p class="os__meta">Windows 10 и 11, 64 бит</p>
-            <a class="btn btn--light" href="download/SadLauncherSetup.exe" download>Скачать установщик</a>
-            <p class="os__note">Создаёт ярлык на рабочем столе и в меню «Пуск». Обновляется одним нажатием.</p>
+            <a class="btn btn--light" href="https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe" download>Скачать установщик</a>
+            <p class="os__note">Создаёт ярлык на рабочем столе и в меню «Пуск». При выходе новой версии обновляется одним нажатием без потери миров.</p>
+            <span class="spotlight-card__border" aria-hidden="true"></span>
+            <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
-          <article class="os__card glass spot reveal" data-os="mac">
+
+          <article class="os__card spotlight-card reveal" data-os="mac" data-spotlight-card>
+            <span class="spotlight-card__light" aria-hidden="true"></span>
+            <span class="spotlight-card__grain" aria-hidden="true"></span>
             <div class="os__head">
               <h3>macOS</h3>
-              <span class="os__pill">APP</span>
+              <span class="os__pill">APP · UNIVERSAL</span>
             </div>
             <p class="os__meta">Apple Silicon и Intel</p>
             <a class="btn btn--light" href="download/install-macos.command" download>Скачать для macOS</a>
             <p class="os__note">Автоскрипт скачивает и устанавливает <code>Sad Launcher.app</code> в Программы без ручной сборки.</p>
+            <span class="spotlight-card__border" aria-hidden="true"></span>
+            <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
-          <article class="os__card glass spot reveal" data-os="linux">
+
+          <article class="os__card spotlight-card reveal" data-os="linux" data-spotlight-card>
+            <span class="spotlight-card__light" aria-hidden="true"></span>
+            <span class="spotlight-card__grain" aria-hidden="true"></span>
             <div class="os__head">
               <h3>Linux</h3>
-              <span class="os__pill">SH</span>
+              <span class="os__pill">SH · X86_64 / ARM64</span>
             </div>
-            <p class="os__meta">x86_64 и ARM64</p>
+            <p class="os__meta">Ubuntu, Debian, Arch, Fedora</p>
             <div class="os__actions">
               <a class="btn btn--light" href="download/install-linux.sh" download>Скачать установщик</a>
             </div>
             <div class="os__cmd">
               <code id="linux-cmd">curl -fsSL https://rkt5jy.bot-keep.xyz/download/install-linux.sh | bash</code>
               <button class="os__copy" type="button" data-copy-target="#linux-cmd" aria-label="Скопировать команду установки для Linux">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                   <rect x="8.5" y="8.5" width="11" height="11" rx="2.2"></rect>
                   <path d="M5.5 15.5 L5.5 6.5 C5.5 5.4 6.4 4.5 7.5 4.5 L16.5 4.5"></path>
                 </svg>
@@ -166,6 +447,8 @@
               </button>
             </div>
             <p class="os__note">Ставит бинарник и создаёт ярлык в меню приложений автоматически.</p>
+            <span class="spotlight-card__border" aria-hidden="true"></span>
+            <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
         </div>
         <p class="os__hint" id="os-hint" hidden></p>
@@ -176,7 +459,7 @@
       <div class="wrap">
         <div class="faq-head">
           <div>
-            <h2 class="h2 reveal">Вопросы и ответы.</h2>
+            <h2 class="h2 reveal" data-blur-text>Вопросы и ответы.</h2>
             <p class="sub reveal faq-sub">Всё про установку, игру с друзьями, эффекты, обновления и сохранность миров.</p>
           </div>
           <div class="stf-meta" id="faq-tools">
@@ -187,7 +470,7 @@
                   <circle cx="8.5" cy="8.5" r="6" stroke="currentColor" stroke-width="1.6"></circle>
                   <path d="m13 13 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
                 </svg>
-                <input id="stfQ" type="search" autocomplete="off" spellcheck="false" placeholder="Например, «эффекты», «другом» или «Linux»">
+                <input id="stfQ" type="search" autocomplete="off" spellcheck="false" placeholder="Например, «эффекты», «автокликер» или «Linux»">
                 <button type="button" class="stf-clear" id="stfClear" hidden>Очистить</button>
               </div>
               <div class="stf-count" id="stfCount" aria-live="polite"></div>
@@ -205,12 +488,12 @@
             <p>Откройте вкладку «Игра с другом». Можно создать комнату из 5 цифр либо открыть мир для сети, вписать порт и сразу скопировать один из двух адресов: зелёный адрес для одной Wi‑Fi сети / Radmin / Hamachi или внешний IP для подключения через интернет.</p>
           </details>
           <details class="faq__item" id="faq-effects">
-            <summary>Как работают «Эффекты», автокликер и защита от АФК?</summary>
-            <p>Встроенные эффекты обновляют <code>options.txt</code> и ресурспак <code>SadEffects.zip</code> прямо во время игры (достаточно нажать <code>F3+T</code> в Minecraft), а недостающие визуальные моды с Modrinth ставятся одной кнопкой. Автокликер со своим биндом срабатывает строго когда активно окно Minecraft.</p>
+            <summary>Как работают «Эффекты», автокликер в миллисекундах и защита от АФК?</summary>
+            <p>Встроенные эффекты обновляют <code>options.txt</code> и ресурспак <code>SadEffects.zip</code> прямо во время игры (достаточно нажать <code>F3+T</code> в Minecraft), а недостающие визуальные моды с Modrinth ставятся одной кнопкой. Автокликер настраивается в миллисекундах (от <code>1 мс</code>, например <code>10 мс</code> ≈ 100 кликов/с) со своим биндом и срабатывает строго когда активно окно Minecraft. Защита от АФК настраивается вплоть до 60 минут.</p>
           </details>
           <details class="faq__item" id="faq-updates">
             <summary>Как обновляется лаунчер и пропадают ли настройки?</summary>
-            <p>При выходе новой версии лаунчер сам показывает баннер с размером обновления, кнопками «Напомнить позже» и «Больше не показывать». Обновляется только исполняемый файл — ваш ник, миры, скины и сборки в <code>%APPDATA%\Sad Launcher</code> остаются на месте.</p>
+            <p>При выходе новой версии лаунчер сам показывает баннер с размером обновления, кнопками «Напомнить позже» и «Не показывать». Обновляется только исполняемый файл — ваш ник, миры, скины и сборки в <code>%APPDATA%\Sad Launcher</code> остаются на месте.</p>
           </details>
           <details class="faq__item" id="faq-platforms">
             <summary>Работает ли автоустановка на macOS и Linux?</summary>
@@ -240,12 +523,43 @@
     </section>
   </main>
 
+  <!-- ReactBits Floating Magnifying Dock -->
+  <nav class="dock-wrap" aria-label="Быстрая панель разделов">
+    <div class="dock glass" id="dock">
+      <a class="dock__item is-active" href="#top" data-dock-label="Наверх" aria-label="Наверх">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5L12 3l9 7.5"/><path d="M5 9.5V20h14V9.5"/></svg>
+      </a>
+      <a class="dock__item" href="#inside" data-dock-label="Каталог" aria-label="Каталог">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 3.2 20.4 7.8 20.4 16.2 12 20.8 3.6 16.2 3.6 7.8"/><polyline points="3.6 7.8 12 12.4 20.4 7.8"/><line x1="12" y1="12.4" x2="12" y2="20.8"/></svg>
+      </a>
+      <a class="dock__item" href="#speed" data-dock-label="Скорость" aria-label="Скорость">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </a>
+      <a class="dock__item" href="#effects" data-dock-label="Эффекты" aria-label="Эффекты">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5l14 14"/><line x1="6.4" y1="8.8" x2="8.8" y2="6.4"/><line x1="5" y1="2" x2="5" y2="3.5"/><line x1="2" y1="5" x2="3.5" y2="5"/><line x1="18" y1="3" x2="18" y2="7"/><line x1="16" y1="5" x2="20" y2="5"/></svg>
+      </a>
+      <span class="dock__sep" aria-hidden="true"></span>
+      <a class="dock__item" href="#download" data-dock-label="Скачать" aria-label="Скачать">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="4" x2="12" y2="14.5"/><polyline points="7.5 10.5 12 15 16.5 10.5"/><polyline points="4.5 14 4.5 19.5 19.5 19.5 19.5 14"/></svg>
+      </a>
+      <a class="dock__item" href="#faq" data-dock-label="Вопросы" aria-label="Вопросы">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 1.6-2.5 2.2-2.5 4"/><circle cx="12" cy="17" r="0.8" fill="currentColor"/></svg>
+      </a>
+    </div>
+  </nav>
+
   <footer class="foot">
     <div class="wrap foot__inner">
       <a class="brand" href="#top">
         <img src="assets/icon.png" width="20" height="20" alt="" aria-hidden="true">
         <span>Sad Launcher</span>
       </a>
+      <div class="foot__links">
+        <a href="https://rkt5jy.bot-keep.xyz/">rkt5jy.bot-keep.xyz</a>
+        <a href="https://github.com/simsislam89-crypto/sad-launcher" target="_blank" rel="noopener">GitHub</a>
+        <a href="#download">Установщики</a>
+        <a href="#faq">FAQ</a>
+      </div>
       <p>Не связан с Mojang и Microsoft. Minecraft является товарным знаком Mojang AB.</p>
     </div>
   </footer>

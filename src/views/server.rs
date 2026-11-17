@@ -354,11 +354,12 @@ impl Launcher {
                         let valid = crate::room::parse_code(&self.room_code_buf).is_some();
                         let enter = (resp.lost_focus() || resp.has_focus())
                             && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if (widgets::button_sized(ui, skin, "Войти", Btn::Outline, valid, 28.0, 11.5, 11.0).clicked()
-                            || enter)
-                            && valid
-                        {
+                        let clicked_join = widgets::button_sized(ui, skin, "Войти", Btn::Outline, true, 28.0, 11.5, 11.0).clicked();
+                        if (clicked_join || enter) && valid {
                             join_code = Some(self.room_code_buf.clone());
+                        } else if clicked_join && !valid {
+                            resp.request_focus();
+                            self.friend_state = Some(FriendState::Err("Введи 5-значный код комнаты".into()));
                         }
                         let last = self.cfg.last_room.clone();
                         if !last.is_empty() {
@@ -680,7 +681,7 @@ impl Launcher {
                         crate::icons::Icon::Copy,
                         "Копировать",
                         Btn::Outline,
-                        lan_full.is_some(),
+                        true,
                         26.0,
                         10.5,
                         8.0,
@@ -689,6 +690,8 @@ impl Launcher {
                     {
                         if let Some(a) = &lan_full {
                             copy_str = Some((a.clone(), "Адрес для одной сети скопирован"));
+                        } else {
+                            copy_str = Some((format!("127.0.0.1:{show_port}"), "Скопирован локальный адрес"));
                         }
                     }
 
@@ -702,7 +705,7 @@ impl Launcher {
                         crate::icons::Icon::Copy,
                         "Копировать",
                         Btn::Outline,
-                        pub_full.is_some(),
+                        true,
                         26.0,
                         10.5,
                         8.0,
@@ -711,6 +714,8 @@ impl Launcher {
                     {
                         if let Some(a) = &pub_full {
                             copy_str = Some((a.clone(), "Внешний адрес скопирован"));
+                        } else if let Some(a) = &lan_full {
+                            copy_str = Some((a.clone(), "Внешний IP определяется — скопирован сетевой адрес"));
                         }
                     }
                 },
@@ -738,20 +743,22 @@ impl Launcher {
                     let enter = (resp.lost_focus() || resp.has_focus())
                         && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let can_join = !self.friend_code.trim().is_empty();
-                    if widgets::button_sized(
+                    let clicked_friend = widgets::button_sized(
                         ui,
                         skin,
                         "Зайти к другу",
                         Btn::Primary,
-                        can_join,
+                        true,
                         28.0,
                         11.5,
                         12.0,
                     )
-                    .clicked()
-                        || (enter && can_join)
-                    {
+                    .clicked();
+                    if (clicked_friend || enter) && can_join {
                         join_addr = Some(self.friend_code.trim().to_string());
+                    } else if clicked_friend && !can_join {
+                        resp.request_focus();
+                        self.friend_state = Some(FriendState::Err("Введи адрес друга, например 192.168.1.5:25565".into()));
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(

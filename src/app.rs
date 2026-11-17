@@ -3554,9 +3554,12 @@ impl Launcher {
                         );
                         ui.add(
                             egui::Label::new(
-                                egui::RichText::new("Лаунчер Minecraft на Rust. Бесплатный, без регистрации и рекламы.")
-                                    .font(theme::body(12.0))
-                                    .color(skin.dim()),
+                                egui::RichText::new(format!(
+                                    "Лаунчер Minecraft на Rust. Бесплатный, без регистрации и рекламы. Сайт: {}",
+                                    config::SITE_URL
+                                ))
+                                .font(theme::body(12.0))
+                                .color(skin.dim()),
                             )
                             .wrap(),
                         );
@@ -3609,6 +3612,7 @@ impl Launcher {
                         ui.add_space(8.0);
                         widgets::kv_row(ui, skin, "Сборка", &spec.title(), false);
                         widgets::kv_row(ui, skin, "Java", &java, false);
+                        widgets::kv_row(ui, skin, "Сайт", config::SITE_URL, true);
                         widgets::kv_row(ui, skin, "Каталоги", "Modrinth, CurseForge", false);
                         widgets::kv_row(ui, skin, "Загрузчики", "Forge, NeoForge, Fabric, Quilt", false);
 
@@ -3622,14 +3626,43 @@ impl Launcher {
                             ui.add_space(4.0);
                         }
                         ui.add_space(12.0);
+                        let mut copy_site = false;
                         ui.horizontal(|ui| {
-                            let has_site = !config::SITE_URL.is_empty();
-                            let resp = widgets::button_sized(ui, skin, "Сайт лаунчера", widgets::Btn::Primary, has_site, 30.0, 12.0, 14.0)
-                                .on_hover_text(if has_site { config::SITE_URL } else { "Ссылка появится, когда сайт заработает" });
-                            if has_site && resp.clicked() {
+                            if widgets::button_icon(
+                                ui,
+                                skin,
+                                crate::icons::Icon::Globe,
+                                "Открыть сайт лаунчера",
+                                widgets::Btn::Primary,
+                                true,
+                                30.0,
+                                12.0,
+                                13.0,
+                            )
+                            .on_hover_text(config::SITE_URL)
+                            .clicked()
+                            {
                                 let _ = open::that_detached(config::SITE_URL);
                             }
+                            if widgets::button_icon(
+                                ui,
+                                skin,
+                                crate::icons::Icon::Copy,
+                                "Скопировать ссылку",
+                                widgets::Btn::Outline,
+                                true,
+                                30.0,
+                                11.5,
+                                11.0,
+                            )
+                            .clicked()
+                            {
+                                copy_site = true;
+                            }
                         });
+                        if copy_site {
+                            crate::util::copy_text(ctx, config::SITE_URL);
+                        }
                     });
             });
         if close {

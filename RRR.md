@@ -271,3 +271,25 @@ bash scripts/make-dist.sh                  # launcher + installer в корен�
   - В репозитории `simsislam89-crypto/erootstars` (`D:\working WIN\eroot-store`) добавлена маршрутизация по `Host`: `rkt5jy.bot-keep.xyz` / `*.bot-keep.xyz` отдаёт `launcher_site/` со своим CSP, `eroot.shop` остаётся магазином, `config.py` также читает `SERVER_PORT` панели Botkeep.
 - **Грабли**: в Windows `TextEdit::singleline` без явного `min_size` + `align(Align2::LEFT_CENTER)` игнорирует вертикальное выравнивание родительского layout; `cp` в `Sad Launcher.exe` падает с `Device or resource busy`, если лаунчер открыт во время `make-dist.sh` — добавлен мягкий fallback в `Sad Launcher.new.exe`.
 
+## Обновление 2026-11-17 (поздняя ночь) — лимит Botkeep, 7 интерактивных компонентов сайта, автокликер в мс, Анти-АФК до 60 мин и адаптивная сетка каталога
+
+- **Исправление ошибки импорта GitHub на хостинге Botkeep (`erootstars`, `webhook_server.py`, `.gitignore`, `tests/test_v139.py`)**:
+  - На скриншоте панели Botkeep выяснилось жёсткое ограничение GitHub-импорта: **не более 1000 файлов, 4 МБ на один файл и 20 МБ суммарно на репозиторий**. Файл `launcher_site/download/SadLauncherSetup.exe` (`17.66 МБ`) превышал лимит в 4 МБ и раздувал `erootstars` до `33.91 МБ`.
+  - Решение: `launcher_site/download/SadLauncherSetup.exe` удалён из `erootstars` и добавлен в `.gitignore` (`launcher_site/download/*.exe`), репозиторий `simsislam89-crypto/sad-launcher` переведён в `public` с домашней ссылкой `https://rkt5jy.bot-keep.xyz`, а `launcher_host_router` в `services/webhook_server.py` отдаёт `302 Found` на `https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe`. Итоговый размер `erootstars` снизился до `16.25 МБ` (макс. файл `0.70 МБ`), все 36 тестов (`test_launcher_host`, `test_v138`, `test_v139`) зелёные.
+- **Интеграция 7 компонентов 21st.dev и ReactBits на сайт (`site/index.html`, `site/styles.css`, `site/app.js`)**:
+  - В чистом HTML/CSS/JS (без бандлеров, в чёрно-белой стеклянной эстетике с изумрудным акцентом `#82e6a5`) портированы все 7 присланных компонентов:
+    1. **21st.dev `Spotlight` + `GridPatternSpotlight` + `Hero`**: SVG-паттерн `#grid-pattern` с курсорным прожектором `#hero-grid-spot`, нижней радиальной дугой горизонта `.hero__arc` и кликабельным бейджем `.eyebrow`.
+    2. **ReactBits `<Aurora />`**: WebGL2-шейдер северного сияния (`#aurora-canvas`) с симплекс-шумом в серебристо-изумрудной гамме.
+    3. **ReactBits `<Particles />`**: интерактивные частицы (`#particles-canvas`) с параллаксом, отталкиванием от курсора, мерцанием и волной при клике.
+    4. **ReactBits `<BlurText />`**: пословное проявление заголовков из размытия (`[data-blur-text]`) + режим `data-focus-hover="true"` (наведение на слово фокусирует его и мягко размывает соседние).
+    5. **ReactBits `<MagicBento />`**: интерактивная сетка из 6 карточек (`#magic-bento`) с общей подсветкой границ по близости курсора, 3D-наклоном, волной от клика, звёздной пылью (`.magic-bento__stars`) и живыми виджетами (интерактивный скраб-график скорости `#mb-chart`, тумблеры эффектов, комната с двумя курсорами и двумя адресами LAN/Интернет, 4-шаговый пайплайн и хаб загрузчиков).
+    6. **ReactBits `<SpotlightCard />`**: карточки скачивания ОС (`#spotlight-cards`) с передачей света между соседними карточками (`proximity: 90px`), зерном SVG `fractalNoise` и вспышкой при нажатии.
+    7. **ReactBits `<Dock />`**: плавающая нижняя панель разделов (`#dock`) с плавным увеличением иконок под курсором (`44px -> 62px`), подсказками и индикатором активной секции.
+- **Автокликер в миллисекундах и Анти-АФК до 60 минут (`effects.rs`, `automation.rs`, `views/effects.rs`)**:
+  - Скорость автокликера переведена в **миллисекунды (`мс`)**: поле `autoclicker_ms` (по умолчанию `10 мс` ≈ 100 кликов/с), ползунок `1..=250 мс` и быстрые пресеты `5 мс`, `10 мс (100/с)`, `25 мс`, `50 мс`, `100 мс`.
+  - Максимальный интервал защиты от АФК увеличен с `300 с` до **`3600 с` (`60 мин`)** с форматированием минут и пресетами `30с`, `60с`, `5м`, `15м`, `30м`, `60м`.
+- **Адаптивная сетка каталога модов без пустого поля справа и кликабельность всех кнопок (`main.rs`, `views/mods.rs`, `views/play.rs`, `views/server.rs`, `app.rs`)**:
+  - Начальный размер окна лаунчера увеличен до `1240×760` (помещается 5 карточек в ряд), а функция `grid_cell_size(avail_w)` в `views/mods.rs` растягивает карточки равномерно на 100% доступной ширины строки в `catalog`, `skeleton_grid` и `hit_card`, полностью убирая пустую полосу справа.
+  - Все кнопки в лаунчере сделаны кликабельными с понятной обратной связью; ссылка на сайт `https://rkt5jy.bot-keep.xyz` добавлена в описание окна «О лаунчере», шапку вкладки «Играть», на сайт и в описание GitHub-репозитория.
+
+

@@ -23,6 +23,7 @@ impl Launcher {
         let missing_mods = effects::missing_mod_targets(&self.effects, &spec, &self.mods_cache);
         let snap = self.auto_snap.clone();
         let active_n = self.effects.active_count();
+        let _ = active_n;
         let downloading_mods = self
             .effects_mod_task
             .as_ref()
@@ -44,15 +45,7 @@ impl Launcher {
                 if widgets::button(ui, skin, "Применить сейчас", Btn::Outline, true).clicked() {
                     apply_now = true;
                 }
-                if widgets::button(
-                    ui,
-                    skin,
-                    "Сбросить",
-                    Btn::Ghost,
-                    active_n > 0 || self.effects.anti_afk || self.effects.autoclicker,
-                )
-                .clicked()
-                {
+                if widgets::button(ui, skin, "Сбросить", Btn::Ghost, true).clicked() {
                     reset_now = true;
                 }
             },
@@ -729,29 +722,33 @@ impl Launcher {
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.add_space(46.0);
+                        let clamped_s = automation::clamp_interval_secs(self.effects.anti_afk_secs);
+                        let afk_label = if clamped_s >= 120 && clamped_s % 60 == 0 {
+                            format!("Интервал: {} мин ({clamped_s} с)", clamped_s / 60)
+                        } else {
+                            format!("Интервал: {clamped_s} с")
+                        };
                         ui.label(
-                            RichText::new(format!(
-                                "Интервал: {} с",
-                                automation::clamp_interval_secs(self.effects.anti_afk_secs)
-                            ))
-                            .font(theme::mono(11.0))
-                            .color(skin.dim()),
+                            RichText::new(afk_label)
+                                .font(theme::mono(11.0))
+                                .color(skin.dim()),
                         );
                         let mut secs = self.effects.anti_afk_secs as f32;
-                        if widgets::slider(ui, skin, &mut secs, 5.0, 300.0).changed() {
-                            let rounded = ((secs / 5.0).round() as u32 * 5).clamp(5, 300);
-                            self.effects.anti_afk_secs = rounded;
+                        if widgets::slider(ui, skin, &mut secs, 5.0, 3600.0).changed() {
+                            let step = if secs > 300.0 { 30.0 } else { 5.0 };
+                            let rounded = ((secs / step).round() * step) as u32;
+                            self.effects.anti_afk_secs = rounded.clamp(5, 3600);
                             changed = true;
                         }
-                        for preset in [30u32, 60, 120] {
-                            if widgets::chip(
-                                ui,
-                                skin,
-                                &format!("{preset}с"),
-                                self.effects.anti_afk_secs == preset,
-                            )
-                            .clicked()
-                            {
+                        for (label, preset) in [
+                            ("30с", 30u32),
+                            ("60с", 60),
+                            ("5м", 300),
+                            ("15м", 900),
+                            ("30м", 1800),
+                            ("60м", 3600),
+                        ] {
+                            if widgets::chip(ui, skin, label, self.effects.anti_afk_secs == preset).clicked() {
                                 self.effects.anti_afk_secs = preset;
                                 changed = true;
                             }
@@ -818,17 +815,31 @@ impl Launcher {
                             self.effects.autoclicker_rmb = true;
                             changed = true;
                         }
+                        let cur_ms = automation::clamp_click_ms(self.effects.autoclicker_ms);
+                        let approx_cps = (1000.0 / cur_ms as f32).round() as u32;
                         ui.label(
-                            RichText::new(format!(
-                                "{:.0} кл/с",
-                                automation::clamp_cps(self.effects.autoclicker_cps)
-                            ))
-                            .font(theme::mono(11.0))
-                            .color(skin.dim()),
+                            RichText::new(format!("Задержка: {cur_ms} мс (~{approx_cps} кл/с)"))
+                                .font(theme::mono(11.0))
+                                .color(skin.dim()),
                         );
-                        if widgets::slider(ui, skin, &mut self.effects.autoclicker_cps, 1.0, 25.0).changed() {
-                            self.effects.autoclicker_cps = self.effects.autoclicker_cps.round().clamp(1.0, 25.0);
+                        let mut ms_f = cur_ms as f32;
+                        if widgets::slider(ui, skin, &mut ms_f, 1.0, 250.0).changed() {
+                            self.effects.autoclicker_ms = (ms_f.round() as u32).clamp(1, 1000);
+                            self.effects.autoclicker_cps = (1000.0 / self.effects.autoclicker_ms as f32).clamp(1.0, 1000.0);
                             changed = true;
+                        }
+                        for (label, ms_preset) in [
+                            ("5 мс", 5u32),
+                            ("10 мс (100/с)", 10),
+                            ("25 мс", 25),
+                            ("50 мс", 50),
+                            ("100 мс", 100),
+                        ] {
+                            if widgets::chip(ui, skin, label, self.effects.autoclicker_ms == ms_preset).clicked() {
+                                self.effects.autoclicker_ms = ms_preset;
+                                self.effects.autoclicker_cps = (1000.0 / ms_preset as f32).clamp(1.0, 1000.0);
+                                changed = true;
+                            }
                         }
                         let capturing_ac = self.bind_capture == Some(BindTarget::Autoclicker);
                         let bind_text = if capturing_ac {
@@ -859,7 +870,8 @@ impl Launcher {
 
         if changed {
             self.effects.anti_afk_secs = automation::clamp_interval_secs(self.effects.anti_afk_secs);
-            self.effects.autoclicker_cps = automation::clamp_cps(self.effects.autoclicker_cps);
+            self.effects.autoclicker_ms = automation::clamp_click_ms(self.effects.autoclicker_ms);
+            self.effects.autoclicker_cps = (1000.0 / self.effects.autoclicker_ms as f32).clamp(1.0, 1000.0);
             effects::save(&self.effects);
             self.automation.update_from_config(&self.effects);
         }

@@ -51,19 +51,11 @@ impl Default for AutomationSnapshot {
 }
 
 pub fn clamp_interval_secs(secs: u32) -> u32 {
-    secs.clamp(5, 300)
+    secs.clamp(5, 3600)
 }
 
-pub fn clamp_cps(cps: f32) -> f32 {
-    if !cps.is_finite() {
-        return 10.0;
-    }
-    cps.clamp(1.0, 25.0)
-}
-
-pub fn click_interval_ms(cps: f32) -> u64 {
-    let clamped = clamp_cps(cps);
-    ((1000.0 / clamped).round() as u64).max(38)
+pub fn clamp_click_ms(ms: u32) -> u32 {
+    ms.clamp(1, 1000)
 }
 
 pub fn bind_display(bind: &str) -> String {
@@ -126,7 +118,7 @@ struct RuntimeConfig {
     anti_afk_secs: AtomicU32,
     anti_afk_vk: AtomicU32,
     autoclicker: AtomicBool,
-    autoclicker_cps_x10: AtomicU32,
+    autoclicker_ms: AtomicU32,
     autoclicker_rmb: AtomicBool,
     autoclicker_vk: AtomicU32,
     capturing_bind: AtomicBool,
@@ -141,7 +133,7 @@ impl RuntimeConfig {
             anti_afk_secs: AtomicU32::new(clamp_interval_secs(cfg.anti_afk_secs)),
             anti_afk_vk: AtomicU32::new(parse_bind_vk(&cfg.anti_afk_bind).unwrap_or(0) as u32),
             autoclicker: AtomicBool::new(cfg.autoclicker),
-            autoclicker_cps_x10: AtomicU32::new((clamp_cps(cfg.autoclicker_cps) * 10.0).round() as u32),
+            autoclicker_ms: AtomicU32::new(clamp_click_ms(cfg.autoclicker_ms)),
             autoclicker_rmb: AtomicBool::new(cfg.autoclicker_rmb),
             autoclicker_vk: AtomicU32::new(parse_bind_vk(&cfg.autoclicker_bind).unwrap_or(0) as u32),
             capturing_bind: AtomicBool::new(false),
@@ -188,10 +180,9 @@ impl AutomationHandle {
             .store(parse_bind_vk(&cfg.anti_afk_bind).unwrap_or(0) as u32, Ordering::Relaxed);
 
         self.rt.autoclicker.store(cfg.autoclicker, Ordering::Relaxed);
-        self.rt.autoclicker_cps_x10.store(
-            (clamp_cps(cfg.autoclicker_cps) * 10.0).round() as u32,
-            Ordering::Relaxed,
-        );
+        self.rt
+            .autoclicker_ms
+            .store(clamp_click_ms(cfg.autoclicker_ms), Ordering::Relaxed);
         self.rt
             .autoclicker_rmb
             .store(cfg.autoclicker_rmb, Ordering::Relaxed);
@@ -302,8 +293,8 @@ fn worker_loop(
         };
 
         let autoclicker_on = rt.autoclicker.load(Ordering::Relaxed);
-        let cps = (rt.autoclicker_cps_x10.load(Ordering::Relaxed) as f32 / 10.0).max(1.0);
-        let click_every = Duration::from_millis(click_interval_ms(cps));
+        let click_ms = rt.autoclicker_ms.load(Ordering::Relaxed).clamp(1, 1000) as u64;
+        let click_every = Duration::from_millis(click_ms);
         if autoclicker_on && mc_running && mc_focused && !capturing {
             if last_click.elapsed() >= click_every {
                 platform::send_mouse_click(rt.autoclicker_rmb.load(Ordering::Relaxed));
@@ -340,7 +331,7 @@ fn worker_loop(
         }
 
         let sleep_ms = if autoclicker_on && mc_running && mc_focused {
-            (click_every.as_millis() as u64 / 3).clamp(8, 25)
+            (click_ms / 2).clamp(1, 15)
         } else if ac_has_bind(&rt) {
             35
         } else {
@@ -721,13 +712,11 @@ mod tests {
 
         assert_eq!(clamp_interval_secs(1), 5);
         assert_eq!(clamp_interval_secs(60), 60);
-        assert_eq!(clamp_interval_secs(900), 300);
+        assert_eq!(clamp_interval_secs(9000), 3600);
 
-        assert_eq!(clamp_cps(0.1), 1.0);
-        assert_eq!(clamp_cps(f32::NAN), 10.0);
-        assert_eq!(clamp_cps(40.0), 25.0);
-        assert_eq!(click_interval_ms(10.0), 100);
-        assert_eq!(click_interval_ms(25.0), 40);
+        assert_eq!(clamp_click_ms(0), 1);
+        assert_eq!(clamp_click_ms(10), 10);
+        assert_eq!(clamp_click_ms(5000), 1000);
     }
 
     #[cfg(all(windows, target_pointer_width = "64"))]

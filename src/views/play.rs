@@ -63,6 +63,23 @@ impl Launcher {
             "Старт",
             "Профиль, версия и запуск — в одном окне",
             |ui| {
+                if !crate::config::SITE_URL.is_empty()
+                    && widgets::button_icon(
+                        ui,
+                        skin,
+                        crate::icons::Icon::Globe,
+                        "Сайт",
+                        Btn::Outline,
+                        true,
+                        32.0,
+                        12.5,
+                        12.0,
+                    )
+                    .on_hover_text(crate::config::SITE_URL)
+                    .clicked()
+                {
+                    let _ = open::that_detached(crate::config::SITE_URL);
+                }
                 if widgets::button(ui, skin, "Папка игры", Btn::Ghost, true).clicked() {
                     open_game = true;
                 }
@@ -131,10 +148,19 @@ impl Launcher {
                                         launch_now = true;
                                     }
                                 }
-                                if widgets::button(ui, skin, "На сервер", Btn::Outline, mc_port > 0)
+                                if widgets::button(ui, skin, "На сервер", Btn::Outline, true)
+                                    .on_hover_text(if mc_port > 0 {
+                                        "Зайти на свой локальный сервер"
+                                    } else {
+                                        "Открыть вкладку «Игра с другом» / сервер"
+                                    })
                                     .clicked()
                                 {
-                                    launch_server = true;
+                                    if mc_port > 0 {
+                                        launch_server = true;
+                                    } else {
+                                        go_server = true;
+                                    }
                                 }
                             });
                         });
