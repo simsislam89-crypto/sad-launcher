@@ -52,7 +52,7 @@ pub fn search_field(
     hint: &str,
     width: f32,
 ) -> Response {
-    widgets::compact_input(ui, skin, id, buf, hint, width, 32.0, theme::body(13.0))
+    widgets::compact_input_ex(ui, skin, id, buf, hint, width, 30.0, theme::body(13.0), Some(Icon::Search))
 }
 
 pub fn play_button(ui: &mut Ui, skin: &Skin, running: bool) -> Response {

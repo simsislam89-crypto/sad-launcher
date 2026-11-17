@@ -10,9 +10,8 @@ pub const APP_TITLE: &str = "Sad Launcher";
 pub const LEGACY_NAME: &str = "LLM Launcher Madrid";
 pub const VERSION: &str = "0.7.0";
 pub const GITHUB_REPO: &str = "simsislam89-crypto/sad-launcher";
-/// The launcher's website. Empty until the site is hosted: the «Сайт
-/// лаунчера» button stays disabled.
-pub const SITE_URL: &str = "";
+/// The launcher's website hosted via Botkeep / custom domain.
+pub const SITE_URL: &str = "https://rkt5jy.bot-keep.xyz";
 pub const DEFAULT_MEMORY_MB: u32 = 4096;
 pub const DEFAULT_SERVER_MEMORY_MB: u32 = 2048;
 /// The Madrid pack target — the launcher installs Forge for this release.

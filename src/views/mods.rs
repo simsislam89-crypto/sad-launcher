@@ -807,11 +807,21 @@ fn hit_card(
     let cats = if hit.categories.is_empty() { "—".to_string() } else { hit.categories.join(" · ") };
     widgets::text_fit(&p, Pos2::new(x, ty + 38.0), Align2::LEFT_TOP, &cats, theme::body(11.0), skin.ink().gamma_multiply(0.85), w);
     let meta = match info {
-        Some(info) => info.label(),
-        None if hit.kind == mods::KIND_MODPACK => "считаю моды…".to_string(),
-        None => format!("↓ {} · {}", downloads_label(hit.downloads), if hit.source == "curseforge" { "CurseForge" } else { "Modrinth" }),
+        Some(info) => {
+            widgets::text_fit(&p, Pos2::new(x, ty + 55.0), Align2::LEFT_TOP, &info.label(), theme::mono(10.5), skin.faint(), w);
+            None
+        }
+        None if hit.kind == mods::KIND_MODPACK => {
+            widgets::text_fit(&p, Pos2::new(x, ty + 55.0), Align2::LEFT_TOP, "считаю моды…", theme::mono(10.5), skin.faint(), w);
+            None
+        }
+        None => Some(format!("{} · {}", downloads_label(hit.downloads), if hit.source == "curseforge" { "CurseForge" } else { "Modrinth" })),
     };
-    widgets::text_fit(&p, Pos2::new(x, ty + 55.0), Align2::LEFT_TOP, &meta, theme::mono(10.5), skin.faint(), w);
+    if let Some(meta_txt) = meta {
+        let icon_rect = Rect::from_center_size(Pos2::new(x + 5.0, ty + 61.5), Vec2::splat(10.0));
+        crate::icons::paint(&p, icon_rect, Icon::ArrowDown, skin.faint(), 1.6);
+        widgets::text_fit(&p, Pos2::new(x + 13.0, ty + 55.0), Align2::LEFT_TOP, &meta_txt, theme::mono(10.5), skin.faint(), (w - 13.0).max(20.0));
+    }
 
     let mut add = false;
     let mut install = false;
@@ -864,7 +874,7 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
     let detail = body_state.as_ref().and_then(|r| r.as_ref().ok()).cloned();
 
     ui.horizontal(|ui| {
-        if widgets::button(ui, skin, "← Каталог", Btn::Ghost, true).clicked() {
+        if widgets::button_icon(ui, skin, Icon::ArrowLeft, "Каталог", Btn::Ghost, true, 30.0, 12.5, 11.0).clicked() {
             back = true;
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

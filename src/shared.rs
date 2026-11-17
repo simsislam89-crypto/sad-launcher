@@ -7,7 +7,7 @@ use std::collections::VecDeque;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Mutex, RwLock};
 use std::time::Instant;
 
@@ -27,6 +27,7 @@ pub struct Shared {
     pub java: Mutex<Option<JavaInfo>>,
     // --------------------------------------------------------- client game
     pub game_running: AtomicBool,
+    pub game_pid: AtomicU32,
     pub game: Mutex<Option<Child>>,
     pub game_log: Mutex<VecDeque<String>>,
     pub game_log_path: Mutex<Option<PathBuf>>,
@@ -55,6 +56,7 @@ impl Shared {
             installed: Mutex::new(Vec::new()),
             java: Mutex::new(None),
             game_running: AtomicBool::new(false),
+            game_pid: AtomicU32::new(0),
             game: Mutex::new(None),
             game_log: Mutex::new(VecDeque::new()),
             game_log_path: Mutex::new(None),
@@ -131,6 +133,14 @@ impl Shared {
 
     pub fn is_game_running(&self) -> bool {
         self.game_running.load(Ordering::Relaxed)
+    }
+
+    pub fn game_pid(&self) -> u32 {
+        self.game_pid.load(Ordering::Relaxed)
+    }
+
+    pub fn set_game_pid(&self, pid: u32) {
+        self.game_pid.store(pid, Ordering::Relaxed);
     }
 
     pub fn set_game(&self, child: Option<Child>) {

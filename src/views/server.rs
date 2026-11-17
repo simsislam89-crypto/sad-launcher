@@ -122,7 +122,7 @@ impl Launcher {
                     ui.add_space(8.0);
                     let local_srv = format!("127.0.0.1:{}", if running { port } else { cfg_port });
                     ui.allocate_ui_with_layout(
-                        Vec2::new(ui.available_width(), 32.0),
+                        Vec2::new(ui.available_width(), 28.0),
                         Layout::left_to_right(Align::Center),
                         |ui| {
                             ui.label(
@@ -130,12 +130,12 @@ impl Launcher {
                                     .font(theme::body(12.0))
                                     .color(skin.dim()),
                             );
-                            widgets::copyable_pill(ui, skin, "srv-local-addr", &local_srv, 175.0, 30.0, None);
-                            if widgets::button_sized(ui, skin, "Копировать", Btn::Outline, true, 30.0, 11.0, 10.0).clicked() {
+                            widgets::copyable_pill(ui, skin, "srv-local-addr", &local_srv, 160.0, 26.0, None);
+                            if widgets::button_icon(ui, skin, crate::icons::Icon::Copy, "Копировать", Btn::Outline, true, 26.0, 10.5, 9.0).clicked() {
                                 copy_local_server = true;
                             }
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                if widgets::button_sized(ui, skin, "Папка сервера", Btn::Ghost, true, 28.0, 11.0, 10.0).clicked() {
+                                if widgets::button_sized(ui, skin, "Папка сервера", Btn::Ghost, true, 26.0, 10.5, 9.0).clicked() {
                                     open_folder = true;
                                 }
                             });
@@ -305,7 +305,7 @@ impl Launcher {
                                 .font(theme::mono(9.5))
                                 .color(skin.faint()),
                         );
-                        widgets::copyable_pill(ui, skin, "room-code-pill", &code, 74.0, 30.0, None);
+                        widgets::copyable_pill(ui, skin, "room-code-pill", &code, 84.0, 26.0, None);
                         widgets::status_dot(
                             ui,
                             if is_err {
@@ -337,7 +337,7 @@ impl Launcher {
                             }
                         });
                     } else {
-                        if widgets::button_sized(ui, skin, "Создать комнату", Btn::Primary, true, 32.0, 12.5, 14.0).clicked() {
+                        if widgets::button_sized(ui, skin, "Создать комнату", Btn::Primary, true, 28.0, 12.0, 12.0).clicked() {
                             create = true;
                         }
                         ui.add_space(6.0);
@@ -347,14 +347,14 @@ impl Launcher {
                             "room-code",
                             &mut self.room_code_buf,
                             "код 5 цифр",
-                            116.0,
-                            32.0,
-                            theme::mono(13.0),
+                            104.0,
+                            28.0,
+                            theme::mono(12.0),
                         );
                         let valid = crate::room::parse_code(&self.room_code_buf).is_some();
                         let enter = (resp.lost_focus() || resp.has_focus())
                             && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if (widgets::button_sized(ui, skin, "Войти", Btn::Outline, valid, 32.0, 12.0, 12.0).clicked()
+                        if (widgets::button_sized(ui, skin, "Войти", Btn::Outline, valid, 28.0, 11.5, 11.0).clicked()
                             || enter)
                             && valid
                         {
@@ -641,9 +641,9 @@ impl Launcher {
             let lan_full = lan_ip.as_ref().map(|ip| format!("{ip}:{show_port}"));
             let pub_full = my_public.as_ref().map(|ip| format!("{ip}:{show_port}"));
 
-            let pill_w = ((w - 420.0) / 2.0).clamp(104.0, 166.0);
+            let pill_w = ((w - 400.0) / 2.0).clamp(112.0, 175.0);
             ui.allocate_ui_with_layout(
-                Vec2::new(w, 32.0),
+                Vec2::new(w, 28.0),
                 Layout::left_to_right(Align::Center),
                 |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
@@ -655,8 +655,8 @@ impl Launcher {
                         &mut self.friend_port,
                         "25565",
                         58.0,
-                        30.0,
-                        theme::mono(12.0),
+                        26.0,
+                        theme::mono(11.5),
                     );
                     ui.add_space(2.0);
                     ui.label(
@@ -671,16 +671,17 @@ impl Launcher {
                         "my-lan-addr",
                         lan_txt,
                         pill_w,
-                        30.0,
+                        26.0,
                         lan_full.as_ref().map(|_| skin.green()),
                     );
-                    if widgets::button_sized(
+                    if widgets::button_icon(
                         ui,
                         skin,
+                        crate::icons::Icon::Copy,
                         "Копировать",
                         Btn::Outline,
                         lan_full.is_some(),
-                        30.0,
+                        26.0,
                         10.5,
                         8.0,
                     )
@@ -694,14 +695,15 @@ impl Launcher {
                     ui.add_space(2.0);
                     ui.label(RichText::new("Интернет:").font(theme::body(11.5)).color(skin.faint()));
                     let pub_txt = pub_full.as_deref().unwrap_or("определяю…");
-                    widgets::copyable_pill(ui, skin, "my-pub-addr", pub_txt, pill_w, 30.0, None);
-                    if widgets::button_sized(
+                    widgets::copyable_pill(ui, skin, "my-pub-addr", pub_txt, pill_w, 26.0, None);
+                    if widgets::button_icon(
                         ui,
                         skin,
+                        crate::icons::Icon::Copy,
                         "Копировать",
                         Btn::Outline,
                         pub_full.is_some(),
-                        30.0,
+                        26.0,
                         10.5,
                         8.0,
                     )
@@ -718,20 +720,20 @@ impl Launcher {
 
             // ---------------------------------------- ПОЛОСА 4: Подключиться к другу по адресу (строго в 1 полосу)
             ui.allocate_ui_with_layout(
-                Vec2::new(w, 34.0),
+                Vec2::new(w, 30.0),
                 Layout::left_to_right(Align::Center),
                 |ui| {
                     ui.label(RichText::new("Адрес друга:").font(theme::body(12.5)).color(skin.dim()));
-                    let input_w = (w - 410.0).clamp(150.0, 320.0);
+                    let input_w = (w - 430.0).clamp(160.0, 270.0);
                     let resp = widgets::compact_input(
                         ui,
                         skin,
                         "friend-code",
                         &mut self.friend_code,
-                        "192.168.1.5:25565 или IP из интернета",
+                        "192.168.1.5:25565 или IP",
                         input_w,
-                        32.0,
-                        theme::mono(12.0),
+                        28.0,
+                        theme::mono(11.5),
                     );
                     let enter = (resp.lost_focus() || resp.has_focus())
                         && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -742,9 +744,9 @@ impl Launcher {
                         "Зайти к другу",
                         Btn::Primary,
                         can_join,
-                        32.0,
+                        28.0,
+                        11.5,
                         12.0,
-                        14.0,
                     )
                     .clicked()
                         || (enter && can_join)

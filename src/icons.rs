@@ -1,9 +1,11 @@
-//! Hand-drawn icon set on a 24×24 grid, one stroke weight, no glyph fallbacks.
+//! Векторный SVG-рендерер для мелких иконок интерфейса (сетка 24×24 из `assets/icons/*.svg`).
+//! Разбирает SVG один раз при первом обращении и рисует со скруглёнными концами штриха и кривыми Безье.
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
+use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke};
+use std::sync::OnceLock;
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Icon {
     Cube,
     Compass,
@@ -22,262 +24,472 @@ pub enum Icon {
     Heart,
     Refresh,
     Sparkle,
+    Effects,
     Modrinth,
     CurseForge,
     Layers,
     Check,
     Trash,
     Folder,
+    Search,
+    Copy,
+    ArrowLeft,
+    ArrowRight,
+    ArrowDown,
+    ChevronDown,
+    Keyboard,
 }
 
-struct Pen<'a> {
-    p: &'a Painter,
-    o: Pos2,
-    k: f32,
-    w: f32,
-    color: Color32,
+#[derive(Clone, Debug)]
+enum SvgPrim {
+    Polyline {
+        pts: Vec<(f32, f32)>,
+        closed: bool,
+        fill: bool,
+        stroke: bool,
+    },
+    Circle {
+        cx: f32,
+        cy: f32,
+        r: f32,
+        fill: bool,
+        stroke: bool,
+    },
+    Rect {
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rx: f32,
+        fill: bool,
+        stroke: bool,
+    },
 }
 
-impl<'a> Pen<'a> {
-    fn pt(&self, x: f32, y: f32) -> Pos2 {
-        self.o + egui::vec2(x * self.k, y * self.k)
+fn svg_source(icon: Icon) -> &'static str {
+    match icon {
+        Icon::Cube => include_str!("../assets/icons/cube.svg"),
+        Icon::Compass => include_str!("../assets/icons/compass.svg"),
+        Icon::Course => include_str!("../assets/icons/course.svg"),
+        Icon::Server => include_str!("../assets/icons/server.svg"),
+        Icon::Sliders => include_str!("../assets/icons/sliders.svg"),
+        Icon::Plus => include_str!("../assets/icons/plus.svg"),
+        Icon::Close => include_str!("../assets/icons/close.svg"),
+        Icon::Minimize => include_str!("../assets/icons/minimize.svg"),
+        Icon::Maximize => include_str!("../assets/icons/maximize.svg"),
+        Icon::Restore => include_str!("../assets/icons/restore.svg"),
+        Icon::Play => include_str!("../assets/icons/play.svg"),
+        Icon::Stop => include_str!("../assets/icons/stop.svg"),
+        Icon::Globe => include_str!("../assets/icons/globe.svg"),
+        Icon::Download => include_str!("../assets/icons/download.svg"),
+        Icon::Heart => include_str!("../assets/icons/heart.svg"),
+        Icon::Refresh => include_str!("../assets/icons/refresh.svg"),
+        Icon::Sparkle => include_str!("../assets/icons/sparkle.svg"),
+        Icon::Effects => include_str!("../assets/icons/effects.svg"),
+        Icon::Modrinth => include_str!("../assets/icons/modrinth.svg"),
+        Icon::CurseForge => include_str!("../assets/icons/curseforge.svg"),
+        Icon::Layers => include_str!("../assets/icons/layers.svg"),
+        Icon::Check => include_str!("../assets/icons/check.svg"),
+        Icon::Trash => include_str!("../assets/icons/trash.svg"),
+        Icon::Folder => include_str!("../assets/icons/folder.svg"),
+        Icon::Search => include_str!("../assets/icons/search.svg"),
+        Icon::Copy => include_str!("../assets/icons/copy.svg"),
+        Icon::ArrowLeft => include_str!("../assets/icons/arrow-left.svg"),
+        Icon::ArrowRight => include_str!("../assets/icons/arrow-right.svg"),
+        Icon::ArrowDown => include_str!("../assets/icons/arrow-down.svg"),
+        Icon::ChevronDown => include_str!("../assets/icons/chevron-down.svg"),
+        Icon::Keyboard => include_str!("../assets/icons/keyboard.svg"),
     }
-    fn line(&self, a: (f32, f32), b: (f32, f32)) {
-        self.p
-            .line_segment([self.pt(a.0, a.1), self.pt(b.0, b.1)], Stroke::new(self.w, self.color));
+}
+
+fn cache_slot(icon: Icon) -> &'static OnceLock<Vec<SvgPrim>> {
+    static CUBE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static COMPASS: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static COURSE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static SERVER: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static SLIDERS: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static PLUS: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static CLOSE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static MINIMIZE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static MAXIMIZE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static RESTORE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static PLAY: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static STOP: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static GLOBE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static DOWNLOAD: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static HEART: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static REFRESH: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static SPARKLE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static EFFECTS: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static MODRINTH: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static CURSEFORGE: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static LAYERS: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static CHECK: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static TRASH: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static FOLDER: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static SEARCH: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static COPY: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static ARROW_LEFT: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static ARROW_RIGHT: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static ARROW_DOWN: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static CHEVRON_DOWN: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    static KEYBOARD: OnceLock<Vec<SvgPrim>> = OnceLock::new();
+    match icon {
+        Icon::Cube => &CUBE,
+        Icon::Compass => &COMPASS,
+        Icon::Course => &COURSE,
+        Icon::Server => &SERVER,
+        Icon::Sliders => &SLIDERS,
+        Icon::Plus => &PLUS,
+        Icon::Close => &CLOSE,
+        Icon::Minimize => &MINIMIZE,
+        Icon::Maximize => &MAXIMIZE,
+        Icon::Restore => &RESTORE,
+        Icon::Play => &PLAY,
+        Icon::Stop => &STOP,
+        Icon::Globe => &GLOBE,
+        Icon::Download => &DOWNLOAD,
+        Icon::Heart => &HEART,
+        Icon::Refresh => &REFRESH,
+        Icon::Sparkle => &SPARKLE,
+        Icon::Effects => &EFFECTS,
+        Icon::Modrinth => &MODRINTH,
+        Icon::CurseForge => &CURSEFORGE,
+        Icon::Layers => &LAYERS,
+        Icon::Check => &CHECK,
+        Icon::Trash => &TRASH,
+        Icon::Folder => &FOLDER,
+        Icon::Search => &SEARCH,
+        Icon::Copy => &COPY,
+        Icon::ArrowLeft => &ARROW_LEFT,
+        Icon::ArrowRight => &ARROW_RIGHT,
+        Icon::ArrowDown => &ARROW_DOWN,
+        Icon::ChevronDown => &CHEVRON_DOWN,
+        Icon::Keyboard => &KEYBOARD,
     }
-    fn poly(&self, pts: &[(f32, f32)]) {
-        for pair in pts.windows(2) {
-            self.line(pair[0], pair[1]);
-        }
-    }
-    fn closed(&self, pts: &[(f32, f32)]) {
-        self.poly(pts);
-        if let (Some(first), Some(last)) = (pts.first(), pts.last()) {
-            self.line(*last, *first);
-        }
-    }
-    fn circle(&self, c: (f32, f32), r: f32) {
-        self.p
-            .circle_stroke(self.pt(c.0, c.1), r * self.k, Stroke::new(self.w, self.color));
-    }
-    fn dot(&self, c: (f32, f32), r: f32) {
-        self.p
-            .circle_filled(self.pt(c.0, c.1), r * self.k, self.color);
-    }
-    fn ellipse(&self, c: (f32, f32), rx: f32, ry: f32) {
-        let steps = 30;
-        let mut prev = None;
-        for i in 0..=steps {
-            let a = i as f32 / steps as f32 * std::f32::consts::TAU;
-            let p = self.pt(c.0 + rx * a.cos(), c.1 + ry * a.sin());
-            if let Some(pp) = prev {
-                self.p.line_segment([pp, p], Stroke::new(self.w, self.color));
+}
+
+fn attr<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
+    for quote in ['"', '\''] {
+        let needle = format!("{key}={quote}");
+        if let Some(i) = tag.find(&needle) {
+            let rest = &tag[i + needle.len()..];
+            if let Some(end) = rest.find(quote) {
+                return Some(&rest[..end]);
             }
-            prev = Some(p);
         }
     }
-    fn rect(&self, r: (f32, f32, f32, f32), rad: f32) {
-        let rect = Rect::from_min_max(self.pt(r.0, r.1), self.pt(r.2, r.3));
-        self.p.rect_stroke(
-            rect,
-            egui::CornerRadius::same((rad * self.k).max(1.0) as u8),
-            Stroke::new(self.w, self.color),
-            egui::StrokeKind::Inside,
-        );
+    None
+}
+
+fn attr_f32(tag: &str, key: &str, default: f32) -> f32 {
+    attr(tag, key).and_then(|v| v.trim().parse::<f32>().ok()).unwrap_or(default)
+}
+
+fn parse_points(raw: &str) -> Vec<(f32, f32)> {
+    let nums: Vec<f32> = raw
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<f32>().ok())
+        .collect();
+    nums.chunks_exact(2).map(|p| (p[0], p[1])).collect()
+}
+
+fn parse_path_d(d: &str) -> Vec<(Vec<(f32, f32)>, bool)> {
+    let mut subpaths: Vec<(Vec<(f32, f32)>, bool)> = Vec::new();
+    let mut cur: Vec<(f32, f32)> = Vec::new();
+    let mut pos = (0.0f32, 0.0f32);
+    let mut start = (0.0f32, 0.0f32);
+
+    let mut toks: Vec<String> = Vec::new();
+    let mut buf = String::new();
+    for ch in d.chars() {
+        if ch.is_ascii_alphabetic() {
+            if !buf.is_empty() {
+                toks.push(std::mem::take(&mut buf));
+            }
+            toks.push(ch.to_string());
+        } else if ch == ',' || ch.is_whitespace() {
+            if !buf.is_empty() {
+                toks.push(std::mem::take(&mut buf));
+            }
+        } else {
+            if ch == '-' && !buf.is_empty() && !buf.ends_with(['e', 'E']) {
+                toks.push(std::mem::take(&mut buf));
+            }
+            buf.push(ch);
+        }
     }
-    fn fill_poly(&self, pts: &[(f32, f32)]) {
-        let pts: Vec<Pos2> = pts.iter().map(|(x, y)| self.pt(*x, *y)).collect();
-        self.p.add(Shape::convex_polygon(pts, self.color, Stroke::NONE));
+    if !buf.is_empty() {
+        toks.push(buf);
     }
+
+    let mut i = 0usize;
+    let mut cmd = 'M';
+    let next_f = |i: &mut usize| -> Option<f32> {
+        let v = toks.get(*i)?.parse::<f32>().ok()?;
+        *i += 1;
+        Some(v)
+    };
+
+    while i < toks.len() {
+        if let Some(c) = toks[i].chars().next().filter(|c| c.is_ascii_alphabetic() && toks[i].len() == 1) {
+            cmd = c;
+            i += 1;
+            if cmd == 'Z' || cmd == 'z' {
+                if !cur.is_empty() {
+                    subpaths.push((std::mem::take(&mut cur), true));
+                }
+                pos = start;
+                continue;
+            }
+        }
+        match cmd {
+            'M' | 'm' => {
+                if !cur.is_empty() {
+                    subpaths.push((std::mem::take(&mut cur), false));
+                }
+                if let (Some(x), Some(y)) = (next_f(&mut i), next_f(&mut i)) {
+                    pos = if cmd == 'm' { (pos.0 + x, pos.1 + y) } else { (x, y) };
+                    start = pos;
+                    cur.push(pos);
+                    cmd = if cmd == 'm' { 'l' } else { 'L' };
+                }
+            }
+            'L' | 'l' => {
+                if let (Some(x), Some(y)) = (next_f(&mut i), next_f(&mut i)) {
+                    pos = if cmd == 'l' { (pos.0 + x, pos.1 + y) } else { (x, y) };
+                    cur.push(pos);
+                }
+            }
+            'H' | 'h' => {
+                if let Some(x) = next_f(&mut i) {
+                    pos.0 = if cmd == 'h' { pos.0 + x } else { x };
+                    cur.push(pos);
+                }
+            }
+            'V' | 'v' => {
+                if let Some(y) = next_f(&mut i) {
+                    pos.1 = if cmd == 'v' { pos.1 + y } else { y };
+                    cur.push(pos);
+                }
+            }
+            'C' | 'c' => {
+                if let (Some(x1), Some(y1), Some(x2), Some(y2), Some(x), Some(y)) = (
+                    next_f(&mut i),
+                    next_f(&mut i),
+                    next_f(&mut i),
+                    next_f(&mut i),
+                    next_f(&mut i),
+                    next_f(&mut i),
+                ) {
+                    let p0 = pos;
+                    let (p1, p2, p3) = if cmd == 'c' {
+                        ((p0.0 + x1, p0.1 + y1), (p0.0 + x2, p0.1 + y2), (p0.0 + x, p0.1 + y))
+                    } else {
+                        ((x1, y1), (x2, y2), (x, y))
+                    };
+                    let steps = 10;
+                    for s in 1..=steps {
+                        let t = s as f32 / steps as f32;
+                        let u = 1.0 - t;
+                        let bx = u * u * u * p0.0 + 3.0 * u * u * t * p1.0 + 3.0 * u * t * t * p2.0 + t * t * t * p3.0;
+                        let by = u * u * u * p0.1 + 3.0 * u * u * t * p1.1 + 3.0 * u * t * t * p2.1 + t * t * t * p3.1;
+                        cur.push((bx, by));
+                    }
+                    pos = p3;
+                }
+            }
+            'Q' | 'q' => {
+                if let (Some(x1), Some(y1), Some(x), Some(y)) =
+                    (next_f(&mut i), next_f(&mut i), next_f(&mut i), next_f(&mut i))
+                {
+                    let p0 = pos;
+                    let (p1, p2) = if cmd == 'q' {
+                        ((p0.0 + x1, p0.1 + y1), (p0.0 + x, p0.1 + y))
+                    } else {
+                        ((x1, y1), (x, y))
+                    };
+                    let steps = 8;
+                    for s in 1..=steps {
+                        let t = s as f32 / steps as f32;
+                        let u = 1.0 - t;
+                        let bx = u * u * p0.0 + 2.0 * u * t * p1.0 + t * t * p2.0;
+                        let by = u * u * p0.1 + 2.0 * u * t * p1.1 + t * t * p2.1;
+                        cur.push((bx, by));
+                    }
+                    pos = p2;
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+    if !cur.is_empty() {
+        subpaths.push((cur, false));
+    }
+    subpaths
+}
+
+fn parse_svg(xml: &str) -> Vec<SvgPrim> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(open) = rest.find('<') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('>') else { break };
+        let tag = after[..close].trim();
+        rest = &after[close + 1..];
+
+        if tag.starts_with('/') || tag.starts_with('?') || tag.starts_with("svg") {
+            continue;
+        }
+        let fill = attr(tag, "fill").map(|v| v != "none").unwrap_or(false);
+        let stroke = attr(tag, "stroke").map(|v| v != "none").unwrap_or(!fill);
+
+        if tag.starts_with("path") {
+            if let Some(d) = attr(tag, "d") {
+                for (pts, closed) in parse_path_d(d) {
+                    if !pts.is_empty() {
+                        out.push(SvgPrim::Polyline { pts, closed, fill, stroke });
+                    }
+                }
+            }
+        } else if tag.starts_with("line") {
+            let x1 = attr_f32(tag, "x1", 0.0);
+            let y1 = attr_f32(tag, "y1", 0.0);
+            let x2 = attr_f32(tag, "x2", 0.0);
+            let y2 = attr_f32(tag, "y2", 0.0);
+            out.push(SvgPrim::Polyline {
+                pts: vec![(x1, y1), (x2, y2)],
+                closed: false,
+                fill: false,
+                stroke: true,
+            });
+        } else if tag.starts_with("circle") {
+            let cx = attr_f32(tag, "cx", 12.0);
+            let cy = attr_f32(tag, "cy", 12.0);
+            let r = attr_f32(tag, "r", 1.0);
+            out.push(SvgPrim::Circle { cx, cy, r, fill, stroke });
+        } else if tag.starts_with("rect") {
+            let x = attr_f32(tag, "x", 0.0);
+            let y = attr_f32(tag, "y", 0.0);
+            let w = attr_f32(tag, "width", 0.0);
+            let h = attr_f32(tag, "height", 0.0);
+            let rx = attr_f32(tag, "rx", 0.0);
+            out.push(SvgPrim::Rect { x, y, w, h, rx, fill, stroke });
+        } else if tag.starts_with("polyline") || tag.starts_with("polygon") {
+            let closed = tag.starts_with("polygon");
+            if let Some(raw) = attr(tag, "points") {
+                let pts = parse_points(raw);
+                if !pts.is_empty() {
+                    out.push(SvgPrim::Polyline { pts, closed, fill, stroke });
+                }
+            }
+        }
+    }
+    out
 }
 
 pub fn paint(p: &Painter, rect: Rect, icon: Icon, color: Color32, weight: f32) {
+    let prims = cache_slot(icon).get_or_init(|| parse_svg(svg_source(icon)));
     let s = rect.width().min(rect.height());
     let k = s / 24.0;
     let o = rect.center() - egui::vec2(12.0 * k, 12.0 * k);
-    let pen = Pen {
-        p,
-        o,
-        k,
-        w: (weight * k).max(1.0),
-        color,
-    };
+    let pt = |x: f32, y: f32| -> Pos2 { o + egui::vec2(x * k, y * k) };
+    let w = (weight * k).max(1.0);
+    let stroke_style = Stroke::new(w, color);
+    let cap_r = w * 0.48;
 
-    match icon {
-        Icon::Cube => {
-            pen.closed(&[
-                (12.0, 3.2),
-                (20.4, 7.8),
-                (20.4, 16.2),
-                (12.0, 20.8),
-                (3.6, 16.2),
-                (3.6, 7.8),
-            ]);
-            pen.poly(&[(3.6, 7.8), (12.0, 12.4), (20.4, 7.8)]);
-            pen.line((12.0, 12.4), (12.0, 20.8));
-        }
-        Icon::Compass => {
-            pen.circle((12.0, 12.0), 8.7);
-            pen.fill_poly(&[(16.6, 7.4), (13.4, 13.4), (10.6, 10.6)]);
-            pen.poly(&[(7.4, 16.6), (10.6, 10.6), (13.4, 13.4)]);
-            pen.line((10.6, 13.4), (13.4, 10.6));
-        }
-        Icon::Course => {
-            pen.rect((4.8, 2.8, 19.2, 21.2), 3.0);
-            pen.poly(&[(13.4, 2.8), (19.2, 8.6), (13.4, 8.6)]);
-            pen.line((13.4, 2.8), (13.4, 8.6));
-            pen.line((19.2, 8.6), (13.4, 8.6));
-            pen.line((8.2, 13.2), (15.8, 13.2));
-            pen.line((8.2, 16.8), (13.0, 16.8));
-        }
-        Icon::Server => {
-            pen.rect((3.2, 4.0, 20.8, 20.0), 3.0);
-            pen.line((3.2, 9.3), (20.8, 9.3));
-            pen.line((3.2, 14.7), (20.8, 14.7));
-            pen.dot((7.0, 6.6), 1.05);
-            pen.dot((7.0, 12.0), 1.05);
-            pen.dot((7.0, 17.4), 1.05);
-        }
-        Icon::Sliders => {
-            pen.line((3.2, 6.4), (12.2, 6.4));
-            pen.line((16.6, 6.4), (20.8, 6.4));
-            pen.circle((14.4, 6.4), 2.2);
-            pen.line((3.2, 12.0), (7.0, 12.0));
-            pen.line((11.4, 12.0), (20.8, 12.0));
-            pen.circle((9.2, 12.0), 2.2);
-            pen.line((3.2, 17.6), (14.2, 17.6));
-            pen.line((18.6, 17.6), (20.8, 17.6));
-            pen.circle((16.4, 17.6), 2.2);
-        }
-        Icon::Plus => {
-            pen.line((12.0, 4.8), (12.0, 19.2));
-            pen.line((4.8, 12.0), (19.2, 12.0));
-        }
-        Icon::Play => pen.fill_poly(&[(8.2, 5.2), (19.0, 12.0), (8.2, 18.8)]),
-        Icon::Stop => {
-            let rect = Rect::from_min_max(pen.pt(7.0, 7.0), pen.pt(17.0, 17.0));
-            pen.p.rect_filled(
-                rect,
-                egui::CornerRadius::same((1.6 * k).max(1.0) as u8),
-                color,
-            );
-        }
-        Icon::Close => {
-            pen.line((6.4, 6.4), (17.6, 17.6));
-            pen.line((17.6, 6.4), (6.4, 17.6));
-        }
-        Icon::Minimize => pen.line((6.0, 12.0), (18.0, 12.0)),
-        Icon::Maximize => pen.rect((6.0, 6.0, 18.0, 18.0), 1.5),
-        Icon::Restore => {
-            pen.rect((4.5, 8.0, 15.5, 19.0), 1.5);
-            pen.poly(&[(8.5, 8.0), (8.5, 4.5), (19.5, 4.5), (19.5, 15.5), (15.5, 15.5)]);
-        }
-        Icon::Globe => {
-            pen.circle((12.0, 12.0), 8.8);
-            pen.ellipse((12.0, 12.0), 4.2, 8.8);
-            pen.line((3.4, 12.0), (20.6, 12.0));
-        }
-        Icon::Download => {
-            pen.line((12.0, 4.0), (12.0, 14.5));
-            pen.poly(&[(7.5, 10.5), (12.0, 15.0), (16.5, 10.5)]);
-            pen.poly(&[(4.5, 14.0), (4.5, 19.5), (19.5, 19.5), (19.5, 14.0)]);
-        }
-        Icon::Heart => {
-            pen.closed(&[
-                (12.0, 7.5),
-                (14.5, 4.5),
-                (18.5, 5.0),
-                (20.5, 8.5),
-                (20.0, 12.0),
-                (12.0, 19.5),
-                (4.0, 12.0),
-                (3.5, 8.5),
-                (5.5, 5.0),
-                (9.5, 4.5),
-            ]);
-        }
-        Icon::Refresh => {
-            pen.poly(&[
-                (4.5, 12.0),
-                (5.5, 7.5),
-                (9.0, 4.8),
-                (14.5, 4.8),
-                (18.8, 8.2),
-                (19.5, 11.5),
-            ]);
-            pen.poly(&[(15.0, 11.5), (19.5, 11.5), (19.5, 7.0)]);
-            pen.poly(&[
-                (19.5, 12.0),
-                (18.5, 16.5),
-                (15.0, 19.2),
-                (9.5, 19.2),
-                (5.2, 15.8),
-                (4.5, 12.5),
-            ]);
-            pen.poly(&[(9.0, 12.5), (4.5, 12.5), (4.5, 17.0)]);
-        }
-        Icon::Sparkle => {
-            pen.closed(&[
-                (12.0, 3.0),
-                (14.5, 9.5),
-                (21.0, 12.0),
-                (14.5, 14.5),
-                (12.0, 21.0),
-                (9.5, 14.5),
-                (3.0, 12.0),
-                (9.5, 9.5),
-            ]);
-        }
-        Icon::Modrinth => {
-            pen.closed(&[
-                (12.0, 3.5),
-                (19.5, 7.8),
-                (19.5, 16.2),
-                (12.0, 20.5),
-                (4.5, 16.2),
-                (4.5, 7.8),
-            ]);
-            pen.poly(&[(7.5, 15.0), (7.5, 9.5), (12.0, 13.5), (16.5, 9.5), (16.5, 15.0)]);
-        }
-        Icon::CurseForge => {
-            pen.closed(&[
-                (5.0, 19.0),
-                (19.0, 19.0),
-                (16.0, 13.0),
-                (18.0, 13.0),
-                (12.0, 4.0),
-                (11.0, 9.0),
-                (8.0, 13.0),
-                (10.0, 13.0),
-            ]);
-        }
-        Icon::Layers => {
-            pen.closed(&[(12.0, 3.5), (20.5, 7.8), (12.0, 12.0), (3.5, 7.8)]);
-            pen.poly(&[(3.5, 12.2), (12.0, 16.5), (20.5, 12.2)]);
-            pen.poly(&[(3.5, 16.5), (12.0, 20.8), (20.5, 16.5)]);
-        }
-        Icon::Check => {
-            pen.poly(&[(4.5, 12.5), (9.5, 17.5), (19.5, 6.5)]);
-        }
-        Icon::Trash => {
-            pen.line((5.0, 7.0), (19.0, 7.0));
-            pen.poly(&[(9.0, 7.0), (9.0, 4.5), (15.0, 4.5), (15.0, 7.0)]);
-            pen.poly(&[(6.5, 7.0), (7.5, 20.0), (16.5, 20.0), (17.5, 7.0)]);
-            pen.line((10.0, 10.5), (10.0, 16.5));
-            pen.line((14.0, 10.5), (14.0, 16.5));
-        }
-        Icon::Folder => {
-            pen.closed(&[
-                (3.5, 5.5),
-                (9.5, 5.5),
-                (11.5, 8.0),
-                (20.5, 8.0),
-                (20.5, 19.5),
-                (3.5, 19.5),
-            ]);
-            pen.line((3.5, 9.5), (20.5, 9.5));
+    for prim in prims {
+        match prim {
+            SvgPrim::Polyline { pts, closed, fill, stroke } => {
+                let mapped: Vec<Pos2> = pts.iter().map(|(x, y)| pt(*x, *y)).collect();
+                if *fill && mapped.len() >= 3 {
+                    p.add(Shape::convex_polygon(mapped.clone(), color, Stroke::NONE));
+                }
+                if *stroke && mapped.len() >= 2 {
+                    for pair in mapped.windows(2) {
+                        p.line_segment([pair[0], pair[1]], stroke_style);
+                    }
+                    if *closed {
+                        if let (Some(&first), Some(&last)) = (mapped.first(), mapped.last()) {
+                            p.line_segment([last, first], stroke_style);
+                        }
+                    }
+                    if cap_r >= 0.7 {
+                        for &node in &mapped {
+                            p.circle_filled(node, cap_r, color);
+                        }
+                    }
+                }
+            }
+            SvgPrim::Circle { cx, cy, r, fill, stroke } => {
+                let c = pt(*cx, *cy);
+                let rr = r * k;
+                if *fill {
+                    p.circle_filled(c, rr, color);
+                }
+                if *stroke {
+                    p.circle_stroke(c, rr, stroke_style);
+                }
+            }
+            SvgPrim::Rect { x, y, w: rw, h: rh, rx, fill, stroke } => {
+                let rr = Rect::from_min_max(pt(*x, *y), pt(*x + *rw, *y + *rh));
+                let cr = CornerRadius::same((rx * k).round().max(1.0) as u8);
+                if *fill {
+                    p.rect_filled(rr, cr, color);
+                }
+                if *stroke {
+                    p.rect_stroke(rr, cr, stroke_style, egui::StrokeKind::Inside);
+                }
+            }
         }
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_svg_icon_parses_with_primitives() {
+        let all = [
+            Icon::Cube,
+            Icon::Compass,
+            Icon::Course,
+            Icon::Server,
+            Icon::Sliders,
+            Icon::Plus,
+            Icon::Close,
+            Icon::Minimize,
+            Icon::Maximize,
+            Icon::Restore,
+            Icon::Play,
+            Icon::Stop,
+            Icon::Globe,
+            Icon::Download,
+            Icon::Heart,
+            Icon::Refresh,
+            Icon::Sparkle,
+            Icon::Effects,
+            Icon::Modrinth,
+            Icon::CurseForge,
+            Icon::Layers,
+            Icon::Check,
+            Icon::Trash,
+            Icon::Folder,
+            Icon::Search,
+            Icon::Copy,
+            Icon::ArrowLeft,
+            Icon::ArrowRight,
+            Icon::ArrowDown,
+            Icon::ChevronDown,
+            Icon::Keyboard,
+        ];
+        for icon in all {
+            let parsed = parse_svg(svg_source(icon));
+            assert!(!parsed.is_empty(), "empty SVG parsed for {icon:?}");
+        }
+    }
+}

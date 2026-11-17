@@ -2,11 +2,16 @@
 //! Применяются к активной сборке в чистом Rust: патчит `options.txt` и
 //! генерирует ресурспак `resourcepacks/SadEffects.zip` с нужными текстурами.
 
-use anyhow::{Context, Result};
+use crate::config::Config;
+use crate::loader::{Loader, Spec};
+use crate::mods::{self, InstalledMod, ModEvent, ModHit};
+use anyhow::{bail, Context, Result};
 use image::{ImageFormat, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -47,6 +52,15 @@ pub struct EffectsConfig {
     pub ambience: bool,
     pub ambience_soft_shadows: bool,
     pub ambience_tone: String,
+
+    // Автоматизация (работает только в запущенном Minecraft)
+    pub anti_afk: bool,
+    pub anti_afk_secs: u32,
+    pub anti_afk_bind: String,
+    pub autoclicker: bool,
+    pub autoclicker_cps: f32,
+    pub autoclicker_rmb: bool,
+    pub autoclicker_bind: String,
 }
 
 impl Default for EffectsConfig {
@@ -85,6 +99,14 @@ impl Default for EffectsConfig {
             ambience: false,
             ambience_soft_shadows: true,
             ambience_tone: "Контрастный".into(),
+
+            anti_afk: false,
+            anti_afk_secs: 60,
+            anti_afk_bind: "F7".into(),
+            autoclicker: false,
+            autoclicker_cps: 10.0,
+            autoclicker_rmb: false,
+            autoclicker_bind: "F6".into(),
         }
     }
 }
@@ -122,6 +144,245 @@ impl EffectsConfig {
 pub struct ApplyReport {
     pub pack_written: bool,
     pub options_updated: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AppliedState {
+    pub options_ok: bool,
+    pub pack_ok: bool,
+}
+
+impl AppliedState {
+    pub fn ready(self) -> bool {
+        self.options_ok && self.pack_ok
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct EffectModSpec {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub slugs: &'static [&'static str],
+    pub search_query: &'static str,
+    pub patterns: &'static [&'static str],
+}
+
+pub const EFFECT_MODS: &[EffectModSpec] = &[
+    EffectModSpec {
+        id: "fullbright",
+        title: "Gamma Utils (Fullbright)",
+        slugs: &["gamma-utils", "fullbright", "fullbright-forge", "neofullbright"],
+        search_query: "fullbright",
+        patterns: &["gamma", "fullbright"],
+    },
+    EffectModSpec {
+        id: "no_fluid",
+        title: "Clear Water / Lava",
+        slugs: &["clear-waterlavapowdersnow", "clear-water", "clear-lava"],
+        search_query: "clear water",
+        patterns: &["clear-water", "clearwater", "clear_water", "clear-lava", "clearlava"],
+    },
+    EffectModSpec {
+        id: "custom_fog",
+        title: "No Fog / Custom Fog",
+        slugs: &["fog-looks-modern-now", "fog-looks-good-now", "clear-fog", "nofog", "no_fog"],
+        search_query: "no-fog",
+        patterns: &["nofog", "no-fog", "no_fog", "clear-fog", "fog-looks", "foglooks"],
+    },
+    EffectModSpec {
+        id: "no_bad_effects",
+        title: "Анти-слепота (CleanView / NoBlindness)",
+        slugs: &["noblindnesseffect", "fogbegone", "cleanview", "cleanview-particles"],
+        search_query: "no blindness",
+        patterns: &["blindness", "cleanview", "fogbegone"],
+    },
+    EffectModSpec {
+        id: "world_time",
+        title: "Time Changer",
+        slugs: &["time-changer", "polytime", "time-weather-changer"],
+        search_query: "time changer",
+        patterns: &["time-changer", "timechanger", "polytime", "time-weather"],
+    },
+    EffectModSpec {
+        id: "ambience",
+        title: "Sky Aesthetics / Ambience",
+        slugs: &["sky-aesthetics", "ambient-environment"],
+        search_query: "sky-aesthetics",
+        patterns: &["sky-aesthetic", "skyaesthetic", "ambient"],
+    },
+];
+
+pub fn effect_mod_spec(id: &str) -> Option<EffectModSpec> {
+    EFFECT_MODS.iter().copied().find(|s| s.id == id)
+}
+
+pub fn mc_minor_version(mc: &str) -> u32 {
+    let base = mc.split('-').next().unwrap_or(mc);
+    let mut parts = base.split('.');
+    let _major = parts.next();
+    parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(20)
+}
+
+pub fn is_effect_mod_installed(effect_id: &str, mods_cache: &[InstalledMod]) -> bool {
+    let Some(spec) = effect_mod_spec(effect_id) else {
+        return false;
+    };
+    mods_cache.iter().any(|m| {
+        if !m.enabled {
+            return false;
+        }
+        let lower = m.name.to_lowercase();
+        spec.patterns.iter().any(|p| lower.contains(p))
+    })
+}
+
+pub fn missing_mod_targets(
+    cfg: &EffectsConfig,
+    spec: &Spec,
+    mods_cache: &[InstalledMod],
+) -> Vec<EffectModSpec> {
+    let mut need: Vec<&'static str> = Vec::new();
+    if cfg.fullbright && mc_minor_version(&spec.mc) >= 19 {
+        need.push("fullbright");
+    }
+    if cfg.no_fluid && cfg.no_fluid_lava {
+        need.push("no_fluid");
+    }
+    if cfg.custom_fog {
+        need.push("custom_fog");
+    }
+    if cfg.no_bad_effects && (cfg.anti_blindness || cfg.anti_nausea) {
+        need.push("no_bad_effects");
+    }
+    if cfg.world_time {
+        need.push("world_time");
+    }
+    if cfg.ambience {
+        need.push("ambience");
+    }
+    need.into_iter()
+        .filter(|id| !is_effect_mod_installed(id, mods_cache))
+        .filter_map(effect_mod_spec)
+        .collect()
+}
+
+pub fn inspect_instance_applied(instance: &Path, cfg: &EffectsConfig) -> AppliedState {
+    let pack_path = instance.join("resourcepacks").join("SadEffects.zip");
+    let pack_ok = if cfg.needs_resourcepack() {
+        pack_path.is_file()
+    } else {
+        !pack_path.exists()
+    };
+    let options_path = instance.join("options.txt");
+    let existing = std::fs::read_to_string(&options_path).unwrap_or_default();
+    let patched = patch_options_text(&existing, cfg);
+    let options_ok = options_path.exists() && patched == existing;
+    AppliedState { options_ok, pack_ok }
+}
+
+fn make_modrinth_hit(slug: &str, title: &str) -> ModHit {
+    ModHit {
+        source: "modrinth".into(),
+        id: slug.into(),
+        slug: slug.into(),
+        title: title.into(),
+        summary: String::new(),
+        downloads: 0,
+        author: String::new(),
+        kind: mods::KIND_MOD.into(),
+        icon_url: None,
+        file_id: None,
+        file_url: None,
+        file_name: None,
+        tags: String::new(),
+        categories: Vec::new(),
+    }
+}
+
+/// Downloads compatible Modrinth mods for the given effect targets into active build's `mods/`.
+pub async fn install_effect_mods<F: FnMut(String) + Send>(
+    client: &reqwest::Client,
+    cfg: &Config,
+    spec: &Spec,
+    targets: Vec<EffectModSpec>,
+    cancel: &Arc<AtomicBool>,
+    mut on_stage: F,
+) -> Result<(Vec<String>, Vec<String>)> {
+    if spec.loader == Loader::Vanilla {
+        bail!("Моды не ставятся на Vanilla — выбери Fabric, Forge или NeoForge во вкладке «Сборка»");
+    }
+    let mut installed = Vec::new();
+    let mut missing = Vec::new();
+    let already = mods::installed(cfg);
+
+    for target in targets {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+        if is_effect_mod_installed(target.id, &already) {
+            installed.push(target.title.to_string());
+            continue;
+        }
+        on_stage(format!("Подбираю мод: {}…", target.title));
+        let mut ok_for_target = false;
+
+        for slug in target.slugs {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let hit = make_modrinth_hit(slug, target.title);
+            let mut nop = |_ev: ModEvent| {};
+            if let Ok(path) = mods::install(client, cfg, &hit, spec, mods::KIND_MOD, cancel, &mut nop).await {
+                let fname = path
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(target.title)
+                    .to_string();
+                installed.push(fname);
+                ok_for_target = true;
+                break;
+            }
+        }
+
+        if !ok_for_target && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Ok(hits) = mods::search(
+                client,
+                cfg,
+                target.search_query,
+                "modrinth",
+                spec,
+                mods::KIND_MOD,
+                "downloads",
+                "",
+                0,
+            )
+            .await
+            {
+                for hit in hits.into_iter().take(3) {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let mut nop = |_ev: ModEvent| {};
+                    if let Ok(path) = mods::install(client, cfg, &hit, spec, mods::KIND_MOD, cancel, &mut nop).await {
+                        let fname = path
+                            .file_name()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or(&hit.title)
+                            .to_string();
+                        installed.push(fname);
+                        ok_for_target = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if !ok_for_target {
+            missing.push(format!("{} (нет версии для {})", target.title, spec.title()));
+        }
+    }
+
+    Ok((installed, missing))
 }
 
 fn config_path() -> PathBuf {
@@ -463,5 +724,34 @@ mod tests {
         assert!(zip.by_name("assets/minecraft/textures/misc/pumpkinblur.png").is_ok());
         assert!(zip.by_name("assets/minecraft/textures/environment/rain.png").is_ok());
         assert!(zip.by_name("assets/minecraft/textures/particle/explosion_0.png").is_ok());
+    }
+
+    #[test]
+    fn detects_effect_mods_and_mc_minor_version() {
+        assert_eq!(mc_minor_version("1.20.1-forge-47.4.0"), 20);
+        assert_eq!(mc_minor_version("1.18.2"), 18);
+        assert_eq!(mc_minor_version("1.21.4"), 21);
+
+        let fake_mods = vec![
+            InstalledMod {
+                name: "gamma-utils-1.7.16".into(),
+                file: "gamma-utils-1.7.16.jar".into(),
+                size: 123,
+                enabled: true,
+            },
+            InstalledMod {
+                name: "nofog-1.3.2".into(),
+                file: "nofog-1.3.2.jar.disabled".into(),
+                size: 456,
+                enabled: false,
+            },
+        ];
+        assert!(is_effect_mod_installed("fullbright", &fake_mods));
+        assert!(!is_effect_mod_installed("custom_fog", &fake_mods));
+
+        let loaded: EffectsConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(loaded.anti_afk_secs, 60);
+        assert_eq!(loaded.autoclicker_bind, "F6");
+        assert_eq!(loaded.anti_afk_bind, "F7");
     }
 }

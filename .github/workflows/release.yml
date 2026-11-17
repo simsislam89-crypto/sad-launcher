@@ -1,0 +1,119 @@
+name: Build Installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - 'assets/**'
+
+concurrency:
+  group: build-installers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build launcher & installer
+        run: |
+          cargo build --release --bin sad-launcher
+          Copy-Item target/release/sad-launcher.exe assets/launcher-payload.exe
+          cargo build --release --bin installer
+          New-Item -ItemType Directory -Force release-assets | Out-Null
+          Copy-Item target/release/installer.exe release-assets/SadLauncherSetup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: release-assets/SadLauncherSetup.exe
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libgtk-3-dev libssl-dev pkg-config
+      - name: Build Linux release
+        run: |
+          cargo build --release --bin sad-launcher
+          mkdir -p pkg release-assets
+          cp target/release/sad-launcher pkg/sad-launcher
+          cp assets/icon.png pkg/sad-launcher.png
+          tar -czf release-assets/sad-launcher-linux-x86_64.tar.gz -C pkg sad-launcher sad-launcher.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux
+          path: release-assets/sad-launcher-linux-x86_64.tar.gz
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - name: Build Universal macOS app bundle
+        run: |
+          cargo build --release --target aarch64-apple-darwin --bin sad-launcher
+          cargo build --release --target x86_64-apple-darwin --bin sad-launcher
+          APP="Sad Launcher.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" release-assets
+          lipo -create \
+            target/aarch64-apple-darwin/release/sad-launcher \
+            target/x86_64-apple-darwin/release/sad-launcher \
+            -output "$APP/Contents/MacOS/sad-launcher"
+          chmod +x "$APP/Contents/MacOS/sad-launcher"
+          cp assets/icon.png "$APP/Contents/Resources/icon.png"
+          cat > "$APP/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key><string>sad-launcher</string>
+            <key>CFBundleIdentifier</key><string>ru.sadlauncher.app</string>
+            <key>CFBundleName</key><string>Sad Launcher</string>
+            <key>CFBundleDisplayName</key><string>Sad Launcher</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>0.7.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          tar -czf release-assets/SadLauncher-macos-universal.tar.gz "$APP"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos
+          path: release-assets/SadLauncher-macos-universal.tar.gz
+
+  release:
+    needs: [windows, linux, macos]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VER=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="v${VER}"
+          fi
+          gh release create "$TAG" dist/* --title "Sad Launcher ${TAG}" --notes "Автосборка для Windows, macOS и Linux." --latest || \
+            gh release upload "$TAG" dist/* --clobber

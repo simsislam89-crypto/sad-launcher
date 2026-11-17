@@ -260,7 +260,9 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
     if let Some(stderr) = child.stderr.take() {
         spawn_reader(stderr, tx);
     }
+    let spawned_pid = child.id();
     shared.set_game(Some(child));
+    shared.set_game_pid(spawned_pid);
     shared.game_running.store(true, Ordering::SeqCst);
 
     if let Ok(mut m) = shared.missing_mods.lock() {
@@ -300,6 +302,7 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
                 Ok(Some(status)) => {
                     drop(guard);
                     shared.game_running.store(false, Ordering::SeqCst);
+                    shared.set_game_pid(0);
                     shared.push_game(format!("[Madrid] Игра завершилась · {status}"));
                     if status.code() == Some(1) {
                         heal_broken_mod(shared.clone(), &log_path_watch);
@@ -313,6 +316,7 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
                 Err(e) => {
                     drop(guard);
                     shared.game_running.store(false, Ordering::SeqCst);
+                    shared.set_game_pid(0);
                     shared.push_game(format!("[Madrid] Ошибка процесса: {e}"));
                     if let Ok(mut g) = shared.game.lock() {
                         *g = None;
