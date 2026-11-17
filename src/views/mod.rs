@@ -1,6 +1,7 @@
 //! Section views. Shared painters live here so every tab keeps one language.
 
 pub mod build;
+pub mod effects;
 pub mod mods;
 pub mod play;
 pub mod server;

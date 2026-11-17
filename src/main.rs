@@ -3,6 +3,7 @@
 mod app;
 mod categories;
 mod deps;
+mod effects;
 mod ftb;
 mod packinfo;
 mod smart;

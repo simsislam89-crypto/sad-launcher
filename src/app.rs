@@ -32,6 +32,7 @@ pub enum Tab {
     Versions,
     Build,
     Mods,
+    Effects,
     Server,
     Settings,
 }
@@ -53,12 +54,13 @@ impl NavEntry {
 }
 
 impl Tab {
-    pub fn all() -> [Tab; 6] {
+    pub fn all() -> [Tab; 7] {
         [
             Tab::Play,
             Tab::Versions,
             Tab::Build,
             Tab::Mods,
+            Tab::Effects,
             Tab::Server,
             Tab::Settings,
         ]
@@ -70,6 +72,7 @@ impl Tab {
             Tab::Versions => "Версии",
             Tab::Build => "Сборка",
             Tab::Mods => "Моды",
+            Tab::Effects => "Эффекты",
             Tab::Server => "Игра с другом",
             Tab::Settings => "Настройки",
         }
@@ -81,6 +84,7 @@ impl Tab {
             Tab::Versions => Icon::Cube,
             Tab::Build => Icon::Layers,
             Tab::Mods => Icon::Course,
+            Tab::Effects => Icon::Sparkle,
             Tab::Server => Icon::Server,
             Tab::Settings => Icon::Sliders,
         }
@@ -599,6 +603,8 @@ pub struct Launcher {
     pub middle_scroll_anchor: Option<Pos2>,
     middle_scroll_dragged: bool,
     pub focus_search: bool,
+    pub effects: crate::effects::EffectsConfig,
+    pub effects_status: Option<(bool, String)>,
     // first-run nickname screen
     pub nick_buf: String,
     pub ctx: Option<egui::Context>,
@@ -1101,6 +1107,8 @@ impl Launcher {
             middle_scroll_anchor: None,
             middle_scroll_dragged: false,
             focus_search: false,
+            effects: crate::effects::load(),
+            effects_status: None,
             nick_buf: String::new(),
             build_selected_id: String::new(),
             build_new_name: String::new(),
@@ -1136,6 +1144,7 @@ impl Launcher {
                 "play" => Tab::Play,
                 "versions" => Tab::Versions,
                 "build" => Tab::Build,
+                "effects" => Tab::Effects,
                 "server" => Tab::Server,
                 "settings" => Tab::Settings,
                 _ => Tab::Mods,
@@ -3495,6 +3504,7 @@ impl Launcher {
                     (egui::Key::Num4, 3),
                     (egui::Key::Num5, 4),
                     (egui::Key::Num6, 5),
+                    (egui::Key::Num7, 6),
                 ] {
                     if i.key_pressed(k) {
                         t = Some(idx);
@@ -3813,6 +3823,7 @@ impl eframe::App for Launcher {
                     Tab::Versions => self.view_versions(ui, &skin),
                     Tab::Build => self.view_build(ui, &skin),
                     Tab::Mods => self.view_mods(ui, &skin),
+                    Tab::Effects => self.view_effects(ui, &skin),
                     Tab::Server => self.view_server(ui, &skin),
                     Tab::Settings => self.view_settings(ui, &skin),
                 }

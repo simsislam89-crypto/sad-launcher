@@ -221,6 +221,10 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
 
     let args = build_args(shared, cfg, &resolved, connect.map(|s| s.to_string()))?;
     fps_defaults(&instance);
+    let effects_cfg = crate::effects::load();
+    if let Err(e) = crate::effects::apply_to_instance(&instance, &resolved.id, &effects_cfg) {
+        shared.log(crate::shared::LogKind::Warn, format!("Эффекты не применились: {e:#}"));
+    }
     crate::util::prefer_dedicated_gpu(&java.path);
     // No console + ABOVE_NORMAL priority on Windows: the game wins CPU time
     // over background apps (browser tabs, updaters), never over the system.
