@@ -17,3 +17,6 @@ desktop.ini
 
 # The site serves the installer: keep exactly this one binary
 !/site/download/SadLauncherSetup.exe
+
+/.agent/
+/.agents/

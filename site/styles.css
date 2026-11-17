@@ -219,6 +219,16 @@ h3 { font: 600 20px/1.25 var(--sans); letter-spacing: -.01em; margin: 0 0 8px; }
 .os__card.is-mine { border-color: var(--line-2); transform: translateY(-4px); }
 .os__card.is-mine h3::after { content: "  ваша система"; font: 500 13px var(--sans); color: var(--faint); }
 .os__hint { color: var(--dim); margin: 22px 0 0; }
+/* Build-from-source steps (Linux/macOS until a ready file ships) */
+.os__build summary { list-style: none; margin-top: 18px; display: inline-flex; cursor: pointer; }
+.os__build summary::-webkit-details-marker { display: none; }
+.os__build summary::after { content: ""; width: 7px; height: 7px; margin-left: 10px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); transition: transform .25s var(--ease); }
+.os__build[open] summary::after { transform: translateY(2px) rotate(-135deg); }
+.os__build ol { margin: 16px 0 0; padding-left: 20px; display: grid; gap: 10px; color: var(--dim); font-size: 14px; line-height: 1.5; }
+.os__build li::marker { color: var(--faint); }
+.os__build code { overflow-wrap: anywhere; padding: 1px 5px; border-radius: 6px; background: var(--glass-2); border: 1px solid var(--line); font-size: .86em; }
+.os__build a { color: var(--ink); text-underline-offset: 3px; }
+.os__note { color: var(--faint); font-size: 13px; margin: 12px 0 0; }
 @media (max-width: 860px) { .os { grid-template-columns: 1fr; } }
 
 /* ---------- faq ---------- */

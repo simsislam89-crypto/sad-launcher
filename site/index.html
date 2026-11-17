@@ -132,13 +132,31 @@
           </article>
           <article class="os__card glass spot reveal" data-os="linux" style="--d:1">
             <h3>Linux</h3>
-            <p class="os__meta">Сборка в разработке</p>
-            <span class="btn btn--glass is-off" aria-disabled="true">Скоро</span>
+            <p class="os__meta">Пока только из исходников, x86_64 и ARM64</p>
+            <details class="os__build">
+              <summary class="btn btn--glass">Как собрать</summary>
+              <ol>
+                <li>Поставьте Rust с <a href="https://rustup.rs" rel="noopener">rustup.rs</a> и компилятор C: <code>sudo apt install build-essential git</code></li>
+                <li><code>git clone https://github.com/simsislam89-crypto/sad-launcher</code></li>
+                <li><code>cd sad-launcher</code>, затем <code>cargo build --release --bin sad-launcher</code></li>
+                <li>Запустите <code>target/release/sad-launcher</code>. Ярлык в меню приложений лаунчер создаст сам.</li>
+              </ol>
+            </details>
+            <p class="os__note">Готовый файл появится на этой странице.</p>
           </article>
           <article class="os__card glass spot reveal" data-os="mac" style="--d:2">
             <h3>macOS</h3>
-            <p class="os__meta">Сборка в разработке</p>
-            <span class="btn btn--glass is-off" aria-disabled="true">Скоро</span>
+            <p class="os__meta">Пока только из исходников, Intel и Apple Silicon</p>
+            <details class="os__build">
+              <summary class="btn btn--glass">Как собрать</summary>
+              <ol>
+                <li>Поставьте инструменты Xcode: <code>xcode-select --install</code>. Затем Rust с <a href="https://rustup.rs" rel="noopener">rustup.rs</a></li>
+                <li><code>git clone https://github.com/simsislam89-crypto/sad-launcher</code></li>
+                <li><code>cd sad-launcher</code>, затем <code>cargo build --release --bin sad-launcher</code></li>
+                <li>Запустите <code>target/release/sad-launcher</code>. Java лаунчер скачает сам.</li>
+              </ol>
+            </details>
+            <p class="os__note">Готовый файл появится на этой странице.</p>
           </article>
         </div>
         <p class="os__hint" id="os-hint" hidden></p>
