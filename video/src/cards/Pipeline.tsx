@@ -17,10 +17,10 @@ export const Pipeline = () => {
 
   return (
     <AbsoluteFill style={{ backgroundColor: sceneBg(), opacity: loopFade(frame, total) }}>
-      <div style={{ position: "absolute", left: 120, top: 150, bottom: 150, width: 2, backgroundColor: FAINT }}>
+      <div style={{ position: "absolute", left: 224, top: 150, bottom: 150, width: 2, backgroundColor: FAINT }}>
         <div style={{ width: 2, height: `${rail * 100}%`, backgroundColor: GREEN }} />
       </div>
-      <div style={{ position: "absolute", left: 96, right: 96, top: 122, bottom: 122, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+      <div style={{ position: "absolute", left: 200, right: 200, top: 122, bottom: 122, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
         {STEPS.map((s, i) => {
           const at = first + i * step;
           const d = ramp(frame, at, at + 0.3 * fps);

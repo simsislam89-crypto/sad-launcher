@@ -15,6 +15,8 @@ pub enum BindTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+// Key capture is Win32-only (GetAsyncKeyState); elsewhere nothing builds these.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub enum BindCapture {
     Set(String),
     Clear,

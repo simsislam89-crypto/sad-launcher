@@ -505,7 +505,8 @@ mod tests {
                 let dir = std::env::temp_dir().join(format!("sad-small-{round}"));
                 let _ = std::fs::remove_dir_all(&dir);
                 let cl = if h1 { bulk_client() } else { client() };
-                let sem = Arc::new(tokio::sync::Semaphore::new(64));
+                let conc: usize = std::env::var("MADRID_CONC").ok().and_then(|v| v.parse().ok()).unwrap_or(64);
+                let sem = Arc::new(tokio::sync::Semaphore::new(conc));
                 let before = bytes_total();
                 let t = std::time::Instant::now();
                 let mut set = tokio::task::JoinSet::new();

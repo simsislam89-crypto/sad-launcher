@@ -690,6 +690,21 @@ impl Launcher {
                 // -------------------------------- 4. Автоматизация (только внутри Minecraft)
                 widgets::section_label(ui, skin, "АВТОМАТИЗАЦИЯ (ТОЛЬКО ВНУТРИ MINECRAFT)");
                 ui.add_space(6.0);
+                if !cfg!(windows) {
+                    // Key capture and input injection are Win32 APIs: on
+                    // macOS/Linux the switches would do nothing — say so.
+                    theme::card_frame(skin).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("Автокликер и защита от АФК пока работают только на Windows.")
+                                    .font(theme::body(12.5))
+                                    .color(skin.dim()),
+                            )
+                            .wrap(),
+                        );
+                    });
+                } else {
                 theme::card_frame(skin).show(ui, |ui| {
                     ui.set_width(ui.available_width());
 
@@ -863,6 +878,7 @@ impl Launcher {
                         }
                     });
                 });
+                }
 
                 ui.add_space(16.0);
             });

@@ -1212,7 +1212,8 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
     let objects_dir = game.join("assets").join("objects");
     // Thousands of tiny files: latency, not bandwidth, is the limit —
     // many requests in flight on pooled connections hide it.
-    let sem = Arc::new(Semaphore::new(64));
+    // 128 in flight measured best (277 → 323 files/s vs 64; 192 adds nothing).
+    let sem = Arc::new(Semaphore::new(128));
     let mut set = tokio::task::JoinSet::new();
     let mut done = 0u64;
     for object in index.objects.values() {
@@ -1236,7 +1237,7 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
             let _permit = permit;
             let _ = download_file(&client, &url, &dest, None).await;
         });
-        if set.len() >= 128 {
+        if set.len() >= 256 {
             set.join_next().await;
             done += 1;
             if done % 32 == 0 {
