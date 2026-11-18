@@ -480,6 +480,54 @@ mod tests {
         assert!(ranges_supported("https://piston-data.mojang.com/v1/objects/x/client.jar"));
     }
 
+    /// `cargo test --release live_small_files_speed -- --ignored --nocapture`:
+    /// 600 Minecraft asset objects (the «thousands of tiny files» phase)
+    /// through one shared HTTP/2 connection vs. many HTTP/1.1 connections.
+    #[test]
+    #[ignore]
+    fn live_small_files_speed() {
+        use std::sync::Arc;
+        rt().block_on(async {
+            let c = client();
+            let manifest: serde_json::Value = c
+                .get("https://piston-meta.mojang.com/mc/game/version_manifest_v2.json")
+                .send().await.unwrap().json().await.unwrap();
+            let v = manifest["versions"].as_array().unwrap().iter()
+                .find(|v| v["id"] == "1.20.1").unwrap()["url"].as_str().unwrap().to_string();
+            let vj: serde_json::Value = c.get(v).send().await.unwrap().json().await.unwrap();
+            let idx: serde_json::Value = c.get(vj["assetIndex"]["url"].as_str().unwrap())
+                .send().await.unwrap().json().await.unwrap();
+            let hashes: Vec<String> = idx["objects"].as_object().unwrap().values()
+                .filter_map(|o| o["hash"].as_str().map(String::from)).collect();
+            for (round, chunk) in hashes.chunks(600).take(4).enumerate() {
+                let h1 = round % 2 == 1;
+                let name = if h1 { "h1-pool" } else { "h2-shared" };
+                let dir = std::env::temp_dir().join(format!("sad-small-{round}"));
+                let _ = std::fs::remove_dir_all(&dir);
+                let cl = if h1 { bulk_client() } else { client() };
+                let sem = Arc::new(tokio::sync::Semaphore::new(64));
+                let before = bytes_total();
+                let t = std::time::Instant::now();
+                let mut set = tokio::task::JoinSet::new();
+                for h in chunk.iter().cloned() {
+                    let cl = cl.clone();
+                    let dest = dir.join(&h[..2]).join(&h);
+                    let permit = sem.clone().acquire_owned().await.unwrap();
+                    set.spawn(async move {
+                        let _p = permit;
+                        let url = format!("https://resources.download.minecraft.net/{}/{}", &h[..2], h);
+                        let _ = fetch_to(&cl, &url, &dest, None, &mut |_, _| {}).await;
+                    });
+                }
+                while set.join_next().await.is_some() {}
+                let mb = (bytes_total() - before) as f64 / 1048576.0;
+                let secs = t.elapsed().as_secs_f64();
+                println!("{name:10} round {round}: 600 files, {mb:.1} MB in {secs:.2}s = {:.1} MB/s, {:.0} files/s", mb / secs, 600.0 / secs);
+                let _ = std::fs::remove_dir_all(&dir);
+            }
+        });
+    }
+
     /// `cargo test live_range_speed -- --ignored --nocapture`: one big file
     /// through the HTTP/2 client vs. per-range HTTP/1.1 connections.
     #[test]

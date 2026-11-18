@@ -13,13 +13,16 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 installed=0
-for url in "$SITE_URL" "$GH_URL"; do
+for url in "$GH_URL" "$SITE_URL"; do
   echo "Проверяю готовое приложение: $url"
   if curl -fsSL "$url" -o "$TMP/app.tar.gz" 2>/dev/null; then
     tar -xzf "$TMP/app.tar.gz" -C "$TMP"
     if [ -d "$TMP/Sad Launcher.app" ]; then
       rm -rf "$TARGET_APP"
       mv "$TMP/Sad Launcher.app" "$TARGET_APP"
+      # Downloaded with curl there is no quarantine flag, but clear it in
+      # case the archive came through a browser: the app is ad-hoc signed,
+      # not notarized, and Gatekeeper would block the first start.
       xattr -dr com.apple.quarantine "$TARGET_APP" >/dev/null 2>&1 || true
       installed=1
       break

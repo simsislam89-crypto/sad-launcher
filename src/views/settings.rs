@@ -639,6 +639,10 @@ impl Launcher {
                     ui.add_space(10.0);
                     widgets::hairline(ui, skin.line_soft());
                     ui.add_space(8.0);
+                    self.update_row(ui, skin);
+                    ui.add_space(10.0);
+                    widgets::hairline(ui, skin.line_soft());
+                    ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new("Удалить лаунчер и все его файлы")

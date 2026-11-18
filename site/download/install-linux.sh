@@ -21,7 +21,7 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 
 installed=0
-for url in "${SITE_BASE}/${PKG}" "${GH_BASE}/${PKG}"; do
+for url in "${GH_BASE}/${PKG}" "${SITE_BASE}/${PKG}"; do
   echo "Проверяю готовый пакет: $url"
   if curl -fsSL "$url" -o "$TMP/pkg.tar.gz" 2>/dev/null; then
     tar -xzf "$TMP/pkg.tar.gz" -C "$TMP"
@@ -61,5 +61,17 @@ DESKTOP
 
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APP_DIR" >/dev/null 2>&1 || true
 
-echo "Готово! Запускаю Sad Launcher..."
+# The binary loads GTK (file dialogs) and OpenGL from the system.
+missing="$(ldd "$BIN_DIR/sad-launcher" 2>/dev/null | awk '/not found/ {print $1}' | tr '
+' ' ')"
+if [ -n "$missing" ]; then
+  echo "Не хватает системных библиотек: $missing"
+  if command -v apt-get >/dev/null 2>&1; then echo "  sudo apt-get install -y libgtk-3-0 libgl1 libxkbcommon0"
+  elif command -v dnf >/dev/null 2>&1; then echo "  sudo dnf install -y gtk3 mesa-libGL libxkbcommon"
+  elif command -v pacman >/dev/null 2>&1; then echo "  sudo pacman -S --needed gtk3 mesa libxkbcommon"
+  fi
+fi
+case ":$PATH:" in *":$BIN_DIR:"*) ;; *) echo "Совет: добавьте $BIN_DIR в PATH, чтобы запускать командой sad-launcher." ;; esac
+
+echo "Готово! Sad Launcher есть в меню приложений. Запускаю..."
 nohup "$BIN_DIR/sad-launcher" >/dev/null 2>&1 &

@@ -490,6 +490,16 @@ impl EffectsModTask {
     }
 }
 
+/// What the last update check said (shown next to «Проверить обновления»).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UpdateStatus {
+    Idle,
+    Checking,
+    Latest,
+    Found(String),
+    Offline,
+}
+
 /// One finished catalog request. `gen` ties it to the request that is
 /// current in the UI — answers to older requests only feed the cache.
 pub struct SearchResult {
@@ -643,7 +653,11 @@ pub struct Launcher {
     pub friend_port: String,
     pub friend_state: Option<FriendState>,
     pub update_info: Option<crate::updater::UpdateInfo>,
-    update_rx: Option<Receiver<Option<crate::updater::UpdateInfo>>>,
+    update_rx: Option<Receiver<Result<Option<crate::updater::UpdateInfo>, ()>>>,
+    /// Result of the last check, shown by «Проверить обновления».
+    pub update_status: UpdateStatus,
+    /// The running check was started by the button (not the silent timer).
+    update_manual: bool,
     pub update_task: Option<UpdateTask>,
     pub update_dismissed: bool,
     update_shown_at: Option<Instant>,
@@ -1207,6 +1221,8 @@ impl Launcher {
             friend_state: None,
             update_info: None,
             update_rx: None,
+            update_status: UpdateStatus::Idle,
+            update_manual: false,
             update_task: None,
             update_dismissed: false,
             update_shown_at: None,
@@ -1296,15 +1312,66 @@ impl Launcher {
         if dev_copy && std::env::var_os("MADRID_DEV_UPDATE").is_none() {
             return;
         }
+        self.start_update_check(ctx, false);
+    }
+
+    /// «Проверить обновления»: asks right now and reports the answer, even
+    /// a version the user chose «Не показывать» for.
+    pub fn check_update_now(&mut self, ctx: &egui::Context) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        self.start_update_check(ctx, true);
+    }
+
+    fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
         self.update_checked_at = Instant::now();
+        self.update_manual = manual;
+        if manual {
+            self.update_status = UpdateStatus::Checking;
+        }
         let (utx, urx) = std::sync::mpsc::channel();
         self.update_rx = Some(urx);
         let uctx = ctx.clone();
         net::spawn(async move {
-            let found = crate::updater::check(&net::client()).await;
+            let found = crate::updater::probe(&net::client(), config::VERSION).await;
             let _ = utx.send(found);
             uctx.request_repaint();
         });
+    }
+
+    /// Version, last check result and the check / update button — the same
+    /// row in «О лаунчере» and at the bottom of «Настройки».
+    pub fn update_row(&mut self, ui: &mut Ui, skin: &Skin) {
+        let ctx = ui.ctx().clone();
+        let (text, color) = match &self.update_status {
+            UpdateStatus::Idle => (format!("Версия {VERSION}"), skin.dim()),
+            UpdateStatus::Checking => (format!("Версия {VERSION} · проверяю…"), skin.dim()),
+            UpdateStatus::Latest => (format!("Версия {VERSION} · установлена последняя"), skin.green()),
+            UpdateStatus::Found(v) => (format!("Доступна версия {v}"), skin.green()),
+            UpdateStatus::Offline => ("Нет связи с GitHub · попробуйте позже".to_string(), skin.red()),
+        };
+        let found = matches!(self.update_status, UpdateStatus::Found(_));
+        let checking = matches!(self.update_status, UpdateStatus::Checking);
+        let mut clicked = false;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(text).font(theme::body(12.5)).color(color));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let label = if found { "Обновиться" } else { "Проверить обновления" };
+                let btn = if found { widgets::Btn::Primary } else { widgets::Btn::Outline };
+                clicked = widgets::button_icon(ui, skin, Icon::Refresh, label, btn, !checking, 28.0, 11.0, 11.5).clicked();
+            });
+        });
+        if clicked {
+            if found {
+                if let Some(info) = self.update_info.clone() {
+                    self.update_dismissed = false;
+                    self.start_update_download(&ctx, info);
+                }
+            } else {
+                self.check_update_now(&ctx);
+            }
+        }
     }
 
     pub fn save_cfg(&self) {
@@ -2327,16 +2394,43 @@ impl Launcher {
         }
 
         if let Some(rx) = self.update_rx.as_ref() {
-            match rx.try_recv() {
-                Ok(Some(info)) => {
-                    if self.cfg.skip_update_version != info.version {
-                        self.update_info = Some(info);
-                        self.update_shown_at = Some(Instant::now());
+            let answer = match rx.try_recv() {
+                Ok(a) => Some(a),
+                Err(TryRecvError::Disconnected) => Some(Err(())),
+                Err(TryRecvError::Empty) => None,
+            };
+            if let Some(answer) = answer {
+                self.update_rx = None;
+                let manual = std::mem::take(&mut self.update_manual);
+                match answer {
+                    Ok(Some(info)) => {
+                        self.update_status = UpdateStatus::Found(info.version.clone());
+                        // A manual check shows even a version once hidden.
+                        if manual || self.cfg.skip_update_version != info.version {
+                            if manual {
+                                self.update_dismissed = false;
+                                if self.cfg.skip_update_version == info.version {
+                                    self.cfg.skip_update_version.clear();
+                                    self.save_cfg();
+                                }
+                            }
+                            self.update_info = Some(info);
+                            self.update_shown_at = Some(Instant::now());
+                        }
                     }
-                    self.update_rx = None;
+                    Ok(None) => {
+                        self.update_status = UpdateStatus::Latest;
+                        if manual {
+                            self.toast(format!("Установлена последняя версия {VERSION}"));
+                        }
+                    }
+                    Err(()) => {
+                        if manual {
+                            self.update_status = UpdateStatus::Offline;
+                            self.toast("Не удалось проверить обновления: нет связи с GitHub");
+                        }
+                    }
                 }
-                Ok(None) | Err(TryRecvError::Disconnected) => self.update_rx = None,
-                Err(TryRecvError::Empty) => {}
             }
         }
         if self.update_info.is_none()
@@ -3742,6 +3836,8 @@ impl Launcher {
                             ui.add_space(4.0);
                         }
                         ui.add_space(12.0);
+                        self.update_row(ui, skin);
+                        ui.add_space(10.0);
                         let mut copy_site = false;
                         ui.horizontal(|ui| {
                             if widgets::button_icon(

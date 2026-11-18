@@ -2281,3 +2281,4 @@ a, button, .btn, .chip, .dock__item, .stf-chip, .stf-btn, .magic-bento__card {
   .magic-bento__media { min-height: 150px; }
   .stf-row { gap: 14px; }
 }
+.os__note a { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }

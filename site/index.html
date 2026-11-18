@@ -15,7 +15,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20261118a">
+  <link rel="stylesheet" href="styles.css?v=20261118b">
 </head>
 <body>
   <a class="skip" href="#main">К содержимому</a>
@@ -253,11 +253,20 @@
             <span class="spotlight-card__grain" aria-hidden="true"></span>
             <div class="os__head">
               <h3>macOS</h3>
-              <span class="os__pill">APP · UNIVERSAL</span>
+              <span class="os__pill">APPLE SILICON · INTEL</span>
             </div>
-            <p class="os__meta">Apple Silicon и Intel</p>
-            <a class="btn btn--light" href="download/install-macos.command" download>Скачать для macOS</a>
-            <p class="os__note">Скрипт ставит <code>Sad Launcher.app</code> в Программы.</p>
+            <p class="os__meta">macOS 11 и новее</p>
+            <div class="os__cmd">
+              <code id="mac-cmd">curl -fsSL https://rkt5jy.bot-keep.xyz/download/install-macos.command | bash</code>
+              <button class="os__copy" type="button" data-copy-target="#mac-cmd" aria-label="Скопировать команду установки для macOS">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="8.5" y="8.5" width="11" height="11" rx="2.2"></rect>
+                  <path d="M5.5 15.5 L5.5 6.5 C5.5 5.4 6.4 4.5 7.5 4.5 L16.5 4.5"></path>
+                </svg>
+                <span>Копировать</span>
+              </button>
+            </div>
+            <p class="os__note">Вставьте в Терминал — приложение встанет в Программы. Или <a href="https://github.com/simsislam89-crypto/sad-launcher/releases/latest/download/SadLauncher-macos-universal.tar.gz">скачайте .app</a> и при первом запуске откройте через правый клик → «Открыть».</p>
             <span class="spotlight-card__border" aria-hidden="true"></span>
             <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
@@ -267,12 +276,9 @@
             <span class="spotlight-card__grain" aria-hidden="true"></span>
             <div class="os__head">
               <h3>Linux</h3>
-              <span class="os__pill">SH · X86_64 / ARM64</span>
+              <span class="os__pill">X86_64</span>
             </div>
             <p class="os__meta">Ubuntu, Debian, Arch, Fedora</p>
-            <div class="os__actions">
-              <a class="btn btn--light" href="download/install-linux.sh" download>Скачать установщик</a>
-            </div>
             <div class="os__cmd">
               <code id="linux-cmd">curl -fsSL https://rkt5jy.bot-keep.xyz/download/install-linux.sh | bash</code>
               <button class="os__copy" type="button" data-copy-target="#linux-cmd" aria-label="Скопировать команду установки для Linux">
@@ -283,7 +289,7 @@
                 <span>Копировать</span>
               </button>
             </div>
-            <p class="os__note">Ставит программу и ярлык в меню приложений.</p>
+            <p class="os__note">Вставьте в терминал — программа и ярлык появятся в меню приложений. Или <a href="https://github.com/simsislam89-crypto/sad-launcher/releases/latest/download/sad-launcher-linux-x86_64.tar.gz">скачайте архив</a>.</p>
             <span class="spotlight-card__border" aria-hidden="true"></span>
             <span class="spotlight-card__edge" aria-hidden="true"></span>
           </article>
@@ -527,6 +533,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/gsap.min.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.12.7/dist/ScrollTrigger.min.js" defer></script>
-  <script src="app.js?v=20261118a" defer></script>
+  <script src="app.js?v=20261118b" defer></script>
 </body>
 </html>

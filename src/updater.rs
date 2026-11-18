@@ -3,7 +3,7 @@
 //! so only the launcher executable is replaced — `%APPDATA%\Sad Launcher`
 //! (nickname, worlds, builds, settings) is never touched.
 
-use crate::config::{GITHUB_REPO, VERSION};
+use crate::config::GITHUB_REPO;
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -143,14 +143,17 @@ pub fn parse_version_json(json: &str) -> Option<UpdateInfo> {
     })
 }
 
-/// Checks GitHub for a newer release or `site/version.json`.
-/// Silent on offline / 404 / private repo.
-pub async fn check(client: &reqwest::Client) -> Option<UpdateInfo> {
-    check_against(client, VERSION).await
+/// [`probe`] collapsed to «newer version or nothing» (live end-to-end test).
+#[cfg(test)]
+pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<UpdateInfo> {
+    probe(client, current).await.ok().flatten()
 }
 
-/// [`check`] against an explicit current version (live end-to-end test).
-pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<UpdateInfo> {
+/// `Ok(Some)` — newer version, `Ok(None)` — this one is the latest,
+/// `Err` — no update source answered (offline, GitHub down). The manual
+/// «Проверить обновления» button tells these apart.
+pub async fn probe(client: &reqwest::Client, current: &str) -> Result<Option<UpdateInfo>, ()> {
+    let mut reached = false;
     let release_url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases/latest");
     if let Ok(resp) = client
         .get(&release_url)
@@ -159,11 +162,13 @@ pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<Up
         .send()
         .await
     {
+        // 404 = no release published yet: GitHub did answer.
+        reached |= resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND;
         if resp.status().is_success() {
             if let Ok(text) = resp.text().await {
                 if let Some(info) = parse_release_json(&text) {
                     if is_newer(&info.version, current) {
-                        return Some(info);
+                        return Ok(Some(info));
                     }
                 }
             }
@@ -171,33 +176,38 @@ pub async fn check_against(client: &reqwest::Client, current: &str) -> Option<Up
     }
 
     // site/version.json describes the Windows installer only.
-    if !cfg!(windows) {
-        return None;
-    }
-    let raw_url = format!("https://raw.githubusercontent.com/{GITHUB_REPO}/main/site/version.json");
-    if let Some(info) = fetch_version_json(client, &raw_url, current).await {
-        return Some(info);
-    }
-
-    let site = crate::config::SITE_URL.trim().trim_end_matches('/');
-    if !site.is_empty() {
-        let site_url = format!("{site}/version.json");
-        if let Some(info) = fetch_version_json(client, &site_url, current).await {
-            return Some(info);
+    if cfg!(windows) {
+        let raw_url = format!("https://raw.githubusercontent.com/{GITHUB_REPO}/main/site/version.json");
+        let site = crate::config::SITE_URL.trim().trim_end_matches('/');
+        let mut urls = vec![raw_url];
+        if !site.is_empty() {
+            urls.push(format!("{site}/version.json"));
+        }
+        for url in urls {
+            match fetch_version_json(client, &url, current).await {
+                Ok(Some(info)) => return Ok(Some(info)),
+                Ok(None) => reached = true,
+                Err(()) => {}
+            }
         }
     }
-    None
+    if reached {
+        Ok(None)
+    } else {
+        Err(())
+    }
 }
 
-async fn fetch_version_json(client: &reqwest::Client, url: &str, current: &str) -> Option<UpdateInfo> {
-    let resp = client.get(url).timeout(Duration::from_secs(6)).send().await.ok()?;
+/// `Err` — the file could not be fetched or read.
+async fn fetch_version_json(client: &reqwest::Client, url: &str, current: &str) -> Result<Option<UpdateInfo>, ()> {
+    let resp = client.get(url).timeout(Duration::from_secs(6)).send().await.map_err(|_| ())?;
     if !resp.status().is_success() {
-        return None;
+        return Err(());
     }
-    let text = resp.text().await.ok()?;
-    let mut info = parse_version_json(&text)?;
+    let text = resp.text().await.map_err(|_| ())?;
+    let mut info = parse_version_json(&text).ok_or(())?;
     if !is_newer(&info.version, current) {
-        return None;
+        return Ok(None);
     }
     if info.size_bytes == 0 {
         if let Ok(head) = client.head(&info.url).timeout(Duration::from_secs(5)).send().await {
@@ -206,7 +216,7 @@ async fn fetch_version_json(client: &reqwest::Client, url: &str, current: &str) 
             }
         }
     }
-    Some(info)
+    Ok(Some(info))
 }
 
 fn temp_installer_path() -> PathBuf {
@@ -431,19 +441,28 @@ mod tests {
 
     #[test]
     fn parses_release_and_version_json() {
-        let rel = r#"{
-            "tag_name": "v0.7.2",
-            "draft": false,
-            "prerelease": false,
-            "assets": [{
-                "name": "SadLauncherSetup.exe",
-                "size": 18055680,
-                "browser_download_url": "https://github.com/simsislam89-crypto/sad-launcher/releases/download/v0.7.2/SadLauncherSetup.exe"
-            }]
-        }"#;
-        let info = parse_release_json(rel).unwrap();
+        // A release with every platform's asset: each build picks its own.
+        let asset = |name: &str, size: u64| {
+            format!(
+                r#"{{"name":"{name}","size":{size},"browser_download_url":"https://github.com/simsislam89-crypto/sad-launcher/releases/download/v0.7.2/{name}"}}"#
+            )
+        };
+        let rel = format!(
+            r#"{{"tag_name":"v0.7.2","draft":false,"prerelease":false,"assets":[{},{},{},{}]}}"#,
+            asset("SadLauncherSetup.exe", 18055680),
+            asset("SadLauncher-macos-universal.tar.gz", 21000000),
+            asset("sad-launcher-linux-x86_64.tar.gz", 15000000),
+            asset("sad-launcher-linux-aarch64.tar.gz", 14000000),
+        );
+        let info = parse_release_json(&rel).unwrap();
         assert_eq!(info.version, "0.7.2");
-        assert_eq!(info.size_bytes, 18055680);
+        assert!(info.url.ends_with(ASSET_NAME), "{} picks {}", ASSET_NAME, info.url);
+        // A Windows-only release offers nothing to macOS/Linux.
+        let win_only = format!(
+            r#"{{"tag_name":"v0.7.2","draft":false,"prerelease":false,"assets":[{}]}}"#,
+            asset("SadLauncherSetup.exe", 18055680)
+        );
+        assert_eq!(parse_release_json(&win_only).is_some(), cfg!(windows));
 
         let vj = r#"{"version":"0.7.1","size":18000000,"url":"https://github.com/simsislam89-crypto/sad-launcher/raw/main/site/download/SadLauncherSetup.exe"}"#;
         let info2 = parse_version_json(vj).unwrap();
