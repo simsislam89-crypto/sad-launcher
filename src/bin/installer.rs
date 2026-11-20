@@ -25,6 +25,10 @@ fn main() {
 }
 
 #[cfg(windows)]
+#[path = "../win.rs"]
+mod win;
+
+#[cfg(windows)]
 mod app {
 
 use eframe::egui::{
@@ -63,28 +67,9 @@ fn programs_dir() -> PathBuf {
         .join("Programs")
 }
 
+/// Native .lnk through the shell's COM object (was a PowerShell script).
 fn make_shortcut(exe_path: &PathBuf, link_path: &PathBuf) -> bool {
-    let exe = exe_path.display().to_string().replace('\'', "");
-    let link = link_path.display().to_string().replace('\'', "");
-    let script = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $s = $ws.CreateShortcut('{link}'); \
-         $s.TargetPath = '{exe}'; \
-         $s.WorkingDirectory = Split-Path -Parent '{exe}'; \
-         $s.IconLocation = '{exe},0'; \
-         $s.Description = 'Sad Launcher · Minecraft Forge'; \
-         $s.Save()",
-        link = link,
-        exe = exe
-    );
-    let mut cmd = std::process::Command::new("powershell");
-    cmd.args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
-    cmd.output().map(|o| o.status.success()).unwrap_or(false)
+    crate::win::create_shortcut(link_path, exe_path, "Sad Launcher · Minecraft Forge")
 }
 
 #[derive(Clone, PartialEq, Eq)]

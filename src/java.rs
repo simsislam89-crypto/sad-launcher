@@ -39,6 +39,13 @@ pub fn run_logged(exe: &str, args: &[String]) -> Result<RunOutput> {
 static PROBE_CACHE: std::sync::Mutex<Option<(String, std::time::Instant, Vec<JavaInfo>)>> =
     std::sync::Mutex::new(None);
 
+/// `java` executables found in the directories of a PATH value.
+fn java_on_path(path: Option<&std::ffi::OsStr>) -> Vec<PathBuf> {
+    let exe = if cfg!(windows) { "java.exe" } else { "java" };
+    path.map(|p| std::env::split_paths(p).map(|dir| dir.join(exe)).filter(|f| f.is_file()).collect())
+        .unwrap_or_default()
+}
+
 /// Every java.exe the launcher can see, sorted best-first.
 pub fn probe_all(custom: &str) -> Vec<JavaInfo> {
     if let Ok(guard) = PROBE_CACHE.lock() {
@@ -145,19 +152,9 @@ fn candidates(custom: &str) -> Vec<PathBuf> {
         out.push(java_in(&home));
     }
 
-    #[cfg(windows)]
-    let which = hidden_command("where").arg("java").output();
-    #[cfg(unix)]
-    let which = hidden_command("which").args(["-a", "java"]).output();
-    if let Ok(o) = which {
-        let text = String::from_utf8_lossy(&o.stdout);
-        for line in text.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                out.push(PathBuf::from(line));
-            }
-        }
-    }
+    // Every java on PATH, in PATH order (what `where java` / `which -a`
+    // printed, without starting a process).
+    out.extend(java_on_path(std::env::var_os("PATH").as_deref()));
 
     #[cfg(windows)]
     {

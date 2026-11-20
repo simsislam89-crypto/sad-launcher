@@ -1,6 +1,6 @@
 # RRR.md — полная история проекта Sad Launcher (бывш. LLM Launcher Madrid)
 
-> Файл для мгновенного входа нейросети в контекст. Обновлён: 2026-11-17 23:30, версия лаунчера 0.7.0. Протокол задач: /allskill (.claude/skills/allskill), список скиллов: SKILLS.md.
+> Файл для мгновенного входа нейросети в контекст. Обновлён: 2026-11-20, версия лаунчера 0.7.3. Протокол задач: /allskill (.claude/skills/allskill), список скиллов: SKILLS.md.
 > Язык проекта — ТОЛЬКО Rust (требование владельца).
 > Проект: `D:\working WIN\LLM launcher` (Windows 11, Git Bash, Rust toolchain x86_64-pc-windows-gnu).
 
@@ -356,3 +356,23 @@ bash scripts/make-dist.sh                  # launcher + installer в корен�
 
 - Импорт Botkeep (1000 файлов, 4 МБ на файл, 20 МБ всего) остановился: ролики и скриншот (~4 МБ) довели `erootstars` до 20,9 МБ. Решение: в `launcher_site/` только HTML/CSS/JS/скрипты, медиа (`assets/cards/*`, `shot-mods@2x.*`) отдаются jsDelivr из `sad-launcher@main` (типы video/webm, video/mp4 верные); в `LAUNCHER_CSP` добавлен `media-src https://cdn.jsdelivr.net`. Репозиторий 16,8 МБ, 518 файлов. Правило синхронизации обновлено в AGENTS.md п. 8. jsDelivr кэширует @main до ~12 ч — новые ролики появляются с задержкой (или менять имя файла).
 - В тестах магазина `test_v98_rich::test_qr_goes_as_separate_photo_when_header_failed` падает и без этих правок — старая проблема, к сайту не относится.
+
+## Обновление 2026-11-20 — v0.7.3: установка в 2 раза быстрее, остатки переписаны на Rust, скилл rust-anything
+
+**Скорость установки (замер `cargo test --release live_install_timing -- --ignored --nocapture`, чистая папка, Forge 1.20.1, 713 МБ; `MADRID_GAME=<папка>` оставляет её, `MADRID_LOADER=forge|fabric|neoforge|vanilla`, `MADRID_MC=…`).** До: 125–160 с, после: 70 с.
+Причины «быстро в начале — медленно в конце» (по замеру скорости каждые 5 с):
+1. Установщик Forge (Java) стартовал только ПОСЛЕ последнего ресурса и 31,6 с работал без прогресса: ~10 с качал свои библиотеки по одной, остальное — процессоры (jarsplitter, ART, binarypatcher, CPU). Теперь `install()` запускает ресурсы и ветку «Java + загрузчик» параллельно (`tokio::try_join!`, события сводит `Funnel`: полоса — ресурсы, хвост подписи «+ Forge»). Перед установщиком `prefetch_installer_libraries` качает библиотеки из install_profile.json + version.json внутри jar в 32 потока, и установщик запускается с `--offline` (при ошибке — повтор без него). Только процессоры: 22,5 → 19,2 с, и они скрыты за ресурсами.
+2. Ресурсы шли в случайном порядке → в конце оставались крупные музыкальные файлы на 2–3 соединениях (1,7–3 МБ/с). Теперь `asset_plan`: крупные первыми, дубликаты хэшей убраны (раньше два задания могли писать один `.part`), прогресс по байтам (размеры есть в индексе), а не по числу файлов.
+3. Все 128 запросов мелких файлов шли по ОДНОМУ HTTP/2-соединению (окно одного TCP): 4–8 МБ/с при 17 МБ/с у крупных файлов на нескольких соединениях. `net::small_file_client(i)` — 12 клиентов (своё соединение у каждого), задания по кругу: ресурсы 65 → 52 с (замер 1 / 6 / 12 соединений: 65,2 / 54,8 / 51,8 с). Дополнительные Range-соединения ограничены общим семафором `net::SEGMENTS` (48) — иначе при «крупные первыми» каждый из 128 файлов открывал до 7 соединений.
+- ГРАБЛИ: `--offline` у установщика Forge не отключает задачу DOWNLOAD_MOJMAPS (installertools качает маппинги сам, ~3 с). Канал владельца на крупных файлах держит до 17 МБ/с — «71 Мбит» из прошлых замеров был потолком одного соединения.
+
+**Переписано на Rust (`src/win.rs`, общий с установщиком через `#[path]`, без новых крейтов):**
+- Ярлыки (лаунчер и установщик): PowerShell `WScript.Shell` → COM `IShellLinkW` + `IPersistFile` в отдельном потоке (COM не смешивается с UI-потоком, где rfd тоже использует COM).
+- Реестр: `reg.exe` (автозапуск, перенос старого имени, выбор дискретной видеокарты при КАЖДОМ запуске игры) → `RegSetValueExW` / `RegDeleteKeyValueW` / `RegGetValueW`.
+- Домашний IP для игры с другом: разбор локализованного вывода `route print` → `GetIpForwardTable` + `GetIpAddrTable` (`upnp::pick_home_ip`, на Vista+ metric1 уже включает метрику интерфейса).
+- Поиск Java: `where java` / `which -a` → обход PATH (`java::java_on_path`).
+- `scripts/make-dist.sh` → крейт `xtask` (workspace): `cargo run -p xtask -- dist`; sh-файл оставлен однострочной обёрткой, чтобы команды в документах не менялись.
+- Удалены 35 одноразовых `scripts/patch-*.py` и `mods-view-body.txt` (давно применённые патчи; история — в git).
+- Осталось не на Rust намеренно: `.bat`-петли самоудаления exe при удалении/обновлении (запущенный exe не может удалить сам себя; нужен процесс, который переживёт лаунчер), `tar` для Java/обновления на macOS/Linux, сайт (`site/`), ролики Remotion (`video/`, React по природе), `setup-antigravity.ps1` (настройка агента, не лаунчер).
+
+**Скилл `rust-anything`** (github.com/erkamyaman/rust-anything, MIT) установлен в `~/.claude/skills/rust-anything` (+ копия в `antigravity/skills/`), вписан в allskill (шаг 2, «Перенос кода на Rust») здесь, в `D:\working WIN\eroot-store\.claude\skills\allskils\SKILL.md` и `D:\working WIN\Claud-vpn 1\.claude\skills\allskills\SKILL.md`. Его CLI (`cargo install rust-anything`) не установлен: автоматическая установка заблокирована, ставить владельцу вручную.

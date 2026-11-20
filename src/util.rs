@@ -117,28 +117,13 @@ pub fn human_uptime(secs: u64) -> String {
 }
 
 #[cfg(windows)]
-fn run_hidden(exe: &str, args: &[&str]) -> bool {
-    hidden_command(exe)
-        .args(args)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-#[cfg(windows)]
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 #[cfg(windows)]
 const RUN_VALUE: &str = crate::config::APP_TITLE;
 
 #[cfg(windows)]
 pub fn autostart_enabled() -> bool {
-    let out = hidden_command("reg")
-        .args(["query", RUN_KEY, "/v", RUN_VALUE])
-        .output();
-    match out {
-        Ok(o) => o.status.success(),
-        Err(_) => false,
-    }
+    crate::win::reg_has_value(RUN_KEY, RUN_VALUE)
 }
 
 #[cfg(unix)]
@@ -172,22 +157,9 @@ pub fn set_autostart(enable: bool) -> bool {
         let exe = std::env::current_exe()
             .map(|p| p.display().to_string())
             .unwrap_or_default();
-        run_hidden(
-            "reg",
-            &[
-                "add",
-                RUN_KEY,
-                "/v",
-                RUN_VALUE,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &format!("\"{}\"", exe),
-                "/f",
-            ],
-        )
+        crate::win::reg_set_string(RUN_KEY, RUN_VALUE, &format!("\"{exe}\""))
     } else {
-        run_hidden("reg", &["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])
+        crate::win::reg_delete_value(RUN_KEY, RUN_VALUE)
     }
 }
 
@@ -197,9 +169,8 @@ pub fn set_autostart(enable: bool) -> bool {
 #[cfg(windows)]
 pub fn migrate_legacy_names() {
     let legacy = crate::config::LEGACY_NAME;
-    let had_autostart = run_hidden("reg", &["query", RUN_KEY, "/v", legacy]);
-    if had_autostart {
-        run_hidden("reg", &["delete", RUN_KEY, "/v", legacy, "/f"]);
+    if crate::win::reg_has_value(RUN_KEY, legacy) {
+        crate::win::reg_delete_value(RUN_KEY, legacy);
         set_autostart(true);
     }
     if let Some(desktop) = dirs::desktop_dir() {
@@ -216,33 +187,13 @@ pub fn open_path(path: &std::path::Path) {
 }
 
 /// Desktop shortcut named after the launcher; the icon comes from the exe.
+/// The Desktop may live in OneDrive — `dirs` asks the shell where it is.
 #[cfg(windows)]
 pub fn create_desktop_shortcut() -> bool {
-    let exe = match std::env::current_exe() {
-        Ok(p) => p.display().to_string(),
-        Err(_) => return false,
+    let (Ok(exe), Some(desktop)) = (std::env::current_exe(), dirs::desktop_dir()) else {
+        return false;
     };
-    let script = format!(
-        "$ws = New-Object -ComObject WScript.Shell; \
-         $p = [Environment]::GetFolderPath('Desktop') + '\\Sad Launcher.lnk'; \
-         $s = $ws.CreateShortcut($p); \
-         $s.TargetPath = '{exe}'; \
-         $s.WorkingDirectory = Split-Path -Parent '{exe}'; \
-         $s.IconLocation = '{exe},0'; \
-         $s.Description = 'Minecraft Madrid · Forge'; \
-         $s.Save()",
-        exe = exe.replace('\'', "")
-    );
-    run_hidden(
-        "powershell",
-        &[
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &script,
-        ],
-    )
+    crate::win::create_shortcut(&desktop.join("Sad Launcher.lnk"), &exe, "Minecraft Madrid · Forge")
 }
 
 /// True when the Desktop .lnk already exists (OneDrive-aware).
@@ -745,19 +696,11 @@ pub fn prefer_dedicated_gpu(exe: &str) {
     if exe.trim().is_empty() {
         return;
     }
-    let _ = hidden_command("reg")
-        .args([
-            "add",
-            r"HKCU\Software\Microsoft\DirectX\UserGpuPreferences",
-            "/v",
-            exe,
-            "/t",
-            "REG_SZ",
-            "/d",
-            "GpuPreference=2;",
-            "/f",
-        ])
-        .output();
+    crate::win::reg_set_string(
+        r"Software\Microsoft\DirectX\UserGpuPreferences",
+        exe,
+        "GpuPreference=2;",
+    );
 }
 
 // ---------------------------------------------------------------- Linux / macOS

@@ -32,6 +32,7 @@
 | `/ecc-plan`, `/ecc-tdd`, `/ecc-code-review`, `/ecc-verify`, `/ecc-build-fix` | План · тесты сначала · ревью · проверка · починка сборки |
 | `/caveman`, `/caveman-review`, `/caveman-explore`, `cavecrew` | Короткие ответы · ревью строкой · поиск по коду без раздувания контекста |
 | `ecc-security-review` | Архивы (zip-slip), пути, сеть, ввод |
+| `/rust-anything` | Перенос кода на Rust по блокам с записью поведения оригинала и `gate` (CLI `cargo install rust-anything`) |
 
 **Не использовать:** `caveman-setup`, `-discover`, `-evidence-review`, `-manage`, `-optimize` (Caveman Cloud, сторонний шлюз), `megacave`,
 `roblox-*`, `screenpipe-*`, `/tg-sync` (для лаунчера не нужны).

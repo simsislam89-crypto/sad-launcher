@@ -39,6 +39,11 @@ description: Обязательный протокол для каждой за�
 - **Поиск по коду**: `caveman-explore` или `cavecrew`.
 - **Ревью**: `caveman-review` или `ecc-code-review`.
 - **Видео/промо-ролик**: `remotion-best-practices` + `remotion-create` / `remotion-render`.
+- **Перенос кода на Rust (Python/JS/TS/C/Go/Ruby/Java/скрипты → Rust)**: `rust-anything` — по одному блоку:
+  замер (`profile`) → план (`analyze`, ждать одобрения) → `bridge` → `record` поведения оригинала → порт в `port.rs`
+  → `diff` N/N → `bench` → `gate`. Готово — только когда `gate` прошёл. Целиком приложение — по `whole-app.md` скилла.
+  CLI: `cargo install rust-anything` + `rust-anything setup` (если нет в PATH — попросить владельца поставить).
+  Скилл: `~/.claude/skills/rust-anything` (источник github.com/erkamyaman/rust-anything).
 
 ## Шаг 3. Вызов скиллов — через Skill, каждый отдельно
 

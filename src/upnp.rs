@@ -32,35 +32,25 @@ pub fn is_unreachable_ip(ip: &str) -> bool {
     addr.is_private() || addr.is_loopback() || addr.is_link_local() || (a == 100 && (64..128).contains(&b))
 }
 
-/// Home-network address from `route print -4`: the interface whose default
-/// route goes through a real gateway in a private range. VPN/TUN adapters
-/// (gateway «On-link» or 0.0.0.0) and virtual switches are skipped.
+/// Home-network address among the default routes (gateway, interface,
+/// metric): the interface whose default route goes through a real gateway
+/// in a private range. VPN/TUN adapters (gateway 0.0.0.0 / on-link) and
+/// virtual switches are skipped; the lowest metric wins.
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn parse_route_table(text: &str) -> Option<String> {
-    text.lines()
-        .filter_map(|line| {
-            let t: Vec<&str> = line.split_whitespace().collect();
-            if t.len() < 5 || t[0] != "0.0.0.0" || t[1] != "0.0.0.0" {
-                return None;
-            }
-            let gw: Ipv4Addr = t[2].parse().ok()?;
-            let iface: Ipv4Addr = t[3].parse().ok()?;
-            let metric: u32 = t[4].parse().ok()?;
-            (gw.is_private() && !gw.is_unspecified() && iface.is_private()).then_some((metric, iface))
-        })
-        .min_by_key(|(metric, _)| *metric)
-        .map(|(_, ip)| ip.to_string())
+pub fn pick_home_ip(routes: &[(Ipv4Addr, Ipv4Addr, u32)]) -> Option<String> {
+    routes
+        .iter()
+        .filter(|(gw, iface, _)| gw.is_private() && !gw.is_unspecified() && iface.is_private())
+        .min_by_key(|(_, _, metric)| *metric)
+        .map(|(_, iface, _)| iface.to_string())
 }
 
 /// This PC's address in the home network (what friends on the same Wi-Fi
-/// use and what the router forwards to).
+/// use and what the router forwards to). Read from the IPv4 route table
+/// directly — `route print` output is localized and costs a process.
 #[cfg(windows)]
 pub fn home_ip() -> Option<String> {
-    let out = crate::platform::hidden_command("route")
-        .args(["print", "-4"])
-        .output()
-        .ok()?;
-    parse_route_table(&String::from_utf8_lossy(&out.stdout))
+    pick_home_ip(&crate::win::default_routes())
 }
 
 /// Linux/macOS: the address the default route uses, when it is a private
@@ -285,12 +275,14 @@ mod tests {
 
     #[test]
     fn route_table_picks_home_interface_not_vpn() {
-        let table = "          0.0.0.0          0.0.0.0    192.168.1.254     192.168.1.65     40
-          0.0.0.0          0.0.0.0         On-link        172.19.0.1      0
-        224.0.0.0        240.0.0.0         On-link         127.0.0.1    331
-";
-        assert_eq!(parse_route_table(table).as_deref(), Some("192.168.1.65"));
-        assert_eq!(parse_route_table("0.0.0.0 0.0.0.0 On-link 10.8.0.2 1"), None);
+        let ip = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        // Home router + a VPN adapter whose «gateway» is on-link (0.0.0.0).
+        let routes = [
+            (ip("192.168.1.254"), ip("192.168.1.65"), 40),
+            (ip("0.0.0.0"), ip("172.19.0.1"), 0),
+        ];
+        assert_eq!(pick_home_ip(&routes).as_deref(), Some("192.168.1.65"));
+        assert_eq!(pick_home_ip(&[(ip("0.0.0.0"), ip("10.8.0.2"), 1)]), None);
     }
 
     #[test]

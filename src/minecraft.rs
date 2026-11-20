@@ -474,15 +474,53 @@ pub async fn install<F: FnMut(InstallEvent) + Send>(
         bail!("Не указана версия Minecraft");
     }
     let version = install_vanilla(client, &game, mc, cancel, on).await?;
-    let java = ensure_java(client, cfg, java_major_for(&version), spec.loader, cancel, on).await?;
-    let (final_id, loader_version) = match spec.loader {
-        Loader::Vanilla => (mc.to_string(), String::new()),
-        Loader::Forge => install_forge(client, &game, mc, &spec.version, &java, cancel, on).await?,
-        Loader::NeoForge => {
-            install_neoforge(client, &game, mc, &spec.version, &java, cancel, on).await?
+
+    // Assets (hundreds of MB, network-bound) and Java + the loader (the
+    // Forge installer is ~30 s of CPU) do not depend on each other: they
+    // run side by side. Before, the loader started only after the last
+    // asset, so the end of every install was half a minute of waiting.
+    let funnel = std::sync::Mutex::new(Funnel {
+        on,
+        assets_live: true,
+        side: String::new(),
+        side_stage: None,
+    });
+    let assets = async {
+        let mut emit = |ev: InstallEvent| {
+            if let Ok(mut f) = funnel.lock() {
+                f.from_assets(ev)
+            }
+        };
+        let r = install_assets(client, &game, &version, cancel, &mut emit).await;
+        if let Ok(mut f) = funnel.lock() {
+            f.assets_done();
         }
-        Loader::Fabric | Loader::Quilt => install_meta_loader(client, &game, spec, cancel, on).await?,
+        r
     };
+    let loader = async {
+        let mut emit = |ev: InstallEvent| {
+            if let Ok(mut f) = funnel.lock() {
+                f.from_loader(ev)
+            }
+        };
+        let java =
+            ensure_java(client, cfg, java_major_for(&version), spec.loader, cancel, &mut emit).await?;
+        let pair = match spec.loader {
+            Loader::Vanilla => (mc.to_string(), String::new()),
+            Loader::Forge => {
+                install_forge(client, &game, mc, &spec.version, &java, cancel, &mut emit).await?
+            }
+            Loader::NeoForge => {
+                install_neoforge(client, &game, mc, &spec.version, &java, cancel, &mut emit).await?
+            }
+            Loader::Fabric | Loader::Quilt => {
+                install_meta_loader(client, &game, spec, cancel, &mut emit).await?
+            }
+        };
+        Ok::<_, anyhow::Error>(pair)
+    };
+    let ((), (final_id, loader_version)) = tokio::try_join!(assets, loader)?;
+    drop(funnel);
 
     let marker = Marker {
         loader: spec.loader.id().to_string(),
@@ -550,8 +588,76 @@ async fn install_vanilla<F: FnMut(InstallEvent) + Send>(
     }
 
     install_libraries(client, game, &version, mc, cancel, on).await?;
-    install_assets(client, game, &version, cancel, on).await?;
     Ok(version)
+}
+
+/// Merges events of the two parallel branches of [`install`] into one
+/// progress line: while assets download they own the bar, and the
+/// loader branch shows as a short «+ Forge» tail of the label.
+struct Funnel<'a, F> {
+    on: &'a mut F,
+    assets_live: bool,
+    /// Short name of what the loader branch is doing («Forge», «Java»).
+    side: String,
+    /// Its last full stage text, replayed once the assets are done.
+    side_stage: Option<String>,
+}
+
+impl<F: FnMut(InstallEvent) + Send> Funnel<'_, F> {
+    fn from_assets(&mut self, ev: InstallEvent) {
+        match ev {
+            InstallEvent::Progress { done, total, label } if !self.side.is_empty() => {
+                (self.on)(InstallEvent::Progress {
+                    done,
+                    total,
+                    label: format!("{label} + {}", self.side),
+                })
+            }
+            other => (self.on)(other),
+        }
+    }
+
+    fn from_loader(&mut self, ev: InstallEvent) {
+        if !self.assets_live {
+            (self.on)(ev);
+            return;
+        }
+        if let InstallEvent::Stage(s) = &ev {
+            let short = short_stage(s);
+            // «Установщик загрузчика работает» keeps the «Forge» it follows.
+            if short != "загрузчик" || self.side.is_empty() {
+                self.side = short;
+            }
+            self.side_stage = Some(s.clone());
+        }
+        // Loader progress (Java, libraries) stays in the background while
+        // the asset bar runs; errors and the rest are not produced here.
+    }
+
+    fn assets_done(&mut self) {
+        self.assets_live = false;
+        if let Some(stage) = self.side_stage.take() {
+            if !self.side.is_empty() {
+                (self.on)(InstallEvent::Stage(stage));
+            }
+        }
+    }
+}
+
+/// «Установщик Forge 1.20.1-47.4.28» → «Forge»: fits next to the asset count.
+fn short_stage(stage: &str) -> String {
+    if stage.contains("уже установлен") {
+        return String::new();
+    }
+    for name in ["NeoForge", "Forge", "Fabric", "Quilt", "Java"] {
+        if stage.contains(name) {
+            return name.to_string();
+        }
+    }
+    if stage.contains("загрузчик") {
+        return "загрузчик".into();
+    }
+    String::new()
 }
 
 /// A Java the build can run on; Temurin is downloaded when none fits.
@@ -859,16 +965,33 @@ async fn run_installer<F: FnMut(InstallEvent) + Send>(
 
     ensure_launcher_profiles(game);
     let before = version_dirs(game);
+    // The installer fetches its libraries one by one (~10 s for Forge
+    // 1.20.1); here they arrive in parallel first, and with everything on
+    // disk it runs `--offline`, skipping its network checks too.
+    let offline = prefetch_installer_libraries(client, game, installer, cancel, on).await;
     on(InstallEvent::Stage("Установщик загрузчика работает (до пары минут)…".into()));
     let mut last_log = String::new();
+    let mut attempts: Vec<(&str, bool)> = Vec::new();
     for flag in flags {
+        if offline {
+            attempts.push((flag, true));
+        }
+        attempts.push((flag, false));
+    }
+    for (flag, offline) in attempts {
+        if cancel.load(Ordering::Relaxed) {
+            bail!("Отменено");
+        }
         let java_path = java.path.clone();
-        let args = vec![
+        let mut args = vec![
             "-jar".to_string(),
             installer.display().to_string(),
             flag.to_string(),
             game.display().to_string(),
         ];
+        if offline {
+            args.push("--offline".into());
+        }
         let out = tokio::task::spawn_blocking(move || crate::java::run_logged(&java_path, &args))
             .await
             .context("Установщик прервался")??;
@@ -895,6 +1018,95 @@ async fn run_installer<F: FnMut(InstallEvent) + Send>(
     let tail: Vec<&str> = last_log.lines().filter(|l| !l.trim().is_empty()).collect();
     let tail = tail.iter().rev().take(6).rev().cloned().collect::<Vec<_>>();
     bail!("Установщик загрузчика завершился ошибкой:\n{}", tail.join("\n"))
+}
+
+/// Libraries named by a Forge/NeoForge installer (its install profile and
+/// the version json inside) that are not on disk yet, as (url, dest).
+/// Entries with an empty url live inside the installer jar itself.
+fn installer_library_jobs(game: &Path, installer: &Path) -> Result<Vec<(String, PathBuf)>> {
+    #[derive(Deserialize, Default)]
+    #[serde(default)]
+    struct Libs {
+        libraries: Vec<Library>,
+        json: Option<String>,
+    }
+    let mut zip = zip::ZipArchive::new(File::open(installer)?).context("Установщик битый")?;
+    let mut read = |name: &str| -> Option<Libs> {
+        let mut entry = zip.by_name(name.trim_start_matches('/')).ok()?;
+        let mut text = String::new();
+        entry.read_to_string(&mut text).ok()?;
+        serde_json::from_str(&text).ok()
+    };
+    let profile = read("install_profile.json").ok_or_else(|| anyhow!("Нет install_profile.json"))?;
+    let inner = read(profile.json.as_deref().unwrap_or("version.json")).unwrap_or_default();
+    let mut jobs = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for lib in profile.libraries.iter().chain(inner.libraries.iter()) {
+        if !rules_allow(&lib.rules) {
+            continue;
+        }
+        let Some(art) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) else {
+            continue;
+        };
+        let (Some(path), false) = (art.path.as_ref(), art.url.is_empty()) else {
+            continue;
+        };
+        if !art.url.starts_with("https://") || path.contains("..") {
+            continue;
+        }
+        let dest = game.join("libraries").join(path);
+        if dest.exists() || !seen.insert(dest.clone()) {
+            continue;
+        }
+        jobs.push((art.url.clone(), dest));
+    }
+    Ok(jobs)
+}
+
+/// Downloads the installer's libraries in parallel. True when every one
+/// is on disk afterwards (then the installer can run offline).
+async fn prefetch_installer_libraries<F: FnMut(InstallEvent) + Send>(
+    client: &reqwest::Client,
+    game: &Path,
+    installer: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+    on: &mut F,
+) -> bool {
+    let jobs = match installer_library_jobs(game, installer) {
+        Ok(j) => j,
+        Err(_) => return false,
+    };
+    let total = jobs.len() as u64;
+    if total == 0 {
+        return true;
+    }
+    on(InstallEvent::Stage(format!("Библиотеки загрузчика · {total}")));
+    let sem = Arc::new(Semaphore::new(32));
+    let mut set = tokio::task::JoinSet::new();
+    for (url, dest) in jobs {
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        let client = client.clone();
+        let Ok(permit) = sem.clone().acquire_owned().await else {
+            return false;
+        };
+        set.spawn(async move {
+            let _permit = permit;
+            download_file(&client, &url, &dest, None).await.is_ok()
+        });
+    }
+    let (mut done, mut all_ok) = (0u64, true);
+    while let Some(res) = set.join_next().await {
+        done += 1;
+        all_ok &= res.unwrap_or(false);
+        on(InstallEvent::Progress {
+            done,
+            total,
+            label: format!("Библиотеки загрузчика · {done}/{total}"),
+        });
+    }
+    all_ok
 }
 
 /// Pre-1.13 Forge installers carry the whole version JSON inside
@@ -1203,67 +1415,67 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
     }
     let text = std::fs::read_to_string(&index_path)?;
     let index: AssetIndex = serde_json::from_str(&text).context("Индекс ресурсов не читается")?;
-    let total = index.objects.len() as u64;
+    let objects_dir = game.join("assets").join("objects");
+    // Several names can share one hash (one file on disk).
+    let unique = unique_objects(&index);
+    let total = unique.len() as u64;
     if total == 0 {
         return Ok(());
     }
     on(InstallEvent::Stage(format!("Ресурсы · {total}")));
 
-    let objects_dir = game.join("assets").join("objects");
     // Thousands of tiny files: latency, not bandwidth, is the limit —
     // many requests in flight on pooled connections hide it.
     // 128 in flight measured best (277 → 323 files/s vs 64; 192 adds nothing).
     let sem = Arc::new(Semaphore::new(128));
     let mut set = tokio::task::JoinSet::new();
-    let mut done = 0u64;
-    for object in index.objects.values() {
-        if object.hash.len() < 2 {
-            done += 1;
-            continue;
-        }
-        let sub = object.hash[..2].to_string();
-        let dest = objects_dir.join(&sub).join(&object.hash);
-        if dest.exists() {
-            done += 1;
-            continue;
-        }
-        if cancel.load(Ordering::Relaxed) {
-            bail!("Отменено");
-        }
-        let url = format!("{RESOURCES}/{sub}/{}", object.hash);
-        let client = client.clone();
-        let permit = sem.clone().acquire_owned().await?;
-        set.spawn(async move {
-            let _permit = permit;
-            let _ = download_file(&client, &url, &dest, None).await;
-        });
-        if set.len() >= 256 {
-            set.join_next().await;
-            done += 1;
-            if done % 32 == 0 {
-                on(InstallEvent::Progress {
-                    done,
-                    total,
-                    label: format!("Ресурсы · {done}/{total}"),
-                });
-            }
-        }
-    }
-    // The tail of the queue reports too (the bar used to freeze here for
-    // the last ~128 files).
-    while set.join_next().await.is_some() {
-        done += 1;
-        if done % 32 == 0 {
+    let plan = asset_plan(&unique, &objects_dir);
+    // The bar moves by bytes, not by files: music is a few big files
+    // among thousands of tiny ones, and a file counter raced ahead and
+    // then crawled.
+    let bytes_total: u64 = unique.iter().map(|o| o.size.max(1)).sum();
+    let mut bytes_done = bytes_total - plan.iter().map(|p| p.size.max(1)).sum::<u64>();
+    let mut done = total - plan.len() as u64;
+    let mut last_report = std::time::Instant::now();
+    let mut report = |done: u64, bytes_done: u64, on: &mut F| {
+        if last_report.elapsed() >= std::time::Duration::from_millis(150) {
+            last_report = std::time::Instant::now();
             on(InstallEvent::Progress {
-                done,
-                total,
+                done: bytes_done,
+                total: bytes_total,
                 label: format!("Ресурсы · {done}/{total}"),
             });
         }
+    };
+    // On the shared runtime small files spread over several connections;
+    // isolated runtimes (server bootstrap) keep the client they were given.
+    let spread = crate::net::is_shared_rt();
+    for (i, job) in plan.into_iter().enumerate() {
+        if cancel.load(Ordering::Relaxed) {
+            bail!("Отменено");
+        }
+        let client = if spread { crate::net::small_file_client(i) } else { client.clone() };
+        let permit = sem.clone().acquire_owned().await?;
+        set.spawn(async move {
+            let _permit = permit;
+            let _ = download_file(&client, &job.url, &job.dest, None).await;
+            job.size.max(1)
+        });
+        // Collect whatever finished meanwhile, without waiting.
+        while let Some(res) = set.try_join_next() {
+            done += 1;
+            bytes_done += res.unwrap_or(0);
+            report(done, bytes_done, on);
+        }
+    }
+    while let Some(res) = set.join_next().await {
+        done += 1;
+        bytes_done += res.unwrap_or(0);
+        report(done, bytes_done, on);
     }
     on(InstallEvent::Progress {
-        done: total,
-        total,
+        done: bytes_total,
+        total: bytes_total,
         label: "Ресурсы готовы".into(),
     });
 
@@ -1289,6 +1501,48 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
         }
     }
     Ok(())
+}
+
+/// One asset to fetch.
+struct AssetJob {
+    url: String,
+    dest: PathBuf,
+    size: u64,
+}
+
+/// Index objects without duplicate hashes.
+fn unique_objects(index: &AssetIndex) -> Vec<AssetObject> {
+    let mut seen = std::collections::HashSet::new();
+    index
+        .objects
+        .values()
+        .filter(|o| o.hash.len() >= 2 && seen.insert(o.hash.clone()))
+        .cloned()
+        .collect()
+}
+
+/// Missing assets, biggest first. Big files (music, ~1–10 MB) start while
+/// thousands of small ones still keep the link busy; the queue ends on
+/// tiny files with all slots in flight. Random order used to leave a few
+/// big files for the end, where they crawled on two or three connections.
+fn asset_plan(objects: &[AssetObject], objects_dir: &Path) -> Vec<AssetJob> {
+    let mut plan: Vec<AssetJob> = objects
+        .iter()
+        .filter_map(|o| {
+            let sub = &o.hash[..2];
+            let dest = objects_dir.join(sub).join(&o.hash);
+            if dest.exists() {
+                return None;
+            }
+            Some(AssetJob {
+                url: format!("{RESOURCES}/{sub}/{}", o.hash),
+                dest,
+                size: o.size,
+            })
+        })
+        .collect();
+    plan.sort_by(|a, b| b.size.cmp(&a.size));
+    plan
 }
 
 pub async fn download_file(
@@ -1430,4 +1684,148 @@ pub fn required_java(cfg: &Config, id: &str) -> u32 {
         .map(|v| v.mc.clone())
         .unwrap_or_else(|| id.to_string());
     crate::java::required_for(&mc)
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    fn obj(hash: &str, size: u64) -> AssetObject {
+        AssetObject { hash: hash.into(), size }
+    }
+
+    #[test]
+    fn asset_plan_dedups_and_starts_with_big_files() {
+        let mut index = AssetIndex::default();
+        index.objects.insert("a".into(), obj("aa11", 10));
+        index.objects.insert("b".into(), obj("bb22", 5_000_000));
+        index.objects.insert("c".into(), obj("aa11", 10)); // same file twice
+        index.objects.insert("d".into(), obj("cc33", 300));
+        index.objects.insert("e".into(), obj("x", 1)); // broken hash
+        let unique = unique_objects(&index);
+        assert_eq!(unique.len(), 3);
+        let dir = std::env::temp_dir().join(format!("sad-plan-{}", std::process::id()));
+        let plan = asset_plan(&unique, &dir);
+        let sizes: Vec<u64> = plan.iter().map(|j| j.size).collect();
+        assert_eq!(sizes, vec![5_000_000, 300, 10]);
+        assert!(plan[0].url.ends_with("/bb/bb22"));
+    }
+
+    #[test]
+    fn short_stage_names_the_loader() {
+        assert_eq!(short_stage("Установщик Forge 1.20.1-47.4.28"), "Forge");
+        assert_eq!(short_stage("Установщик NeoForge 21.1.1"), "NeoForge");
+        assert_eq!(short_stage("Java 21 — скачиваю сам"), "Java");
+        assert_eq!(short_stage("Forge 47.4.28 уже установлен"), "");
+    }
+
+    #[test]
+    fn funnel_keeps_one_progress_line_while_assets_run() {
+        let mut seen: Vec<String> = Vec::new();
+        let mut on = |ev: InstallEvent| match ev {
+            InstallEvent::Stage(s) => seen.push(format!("S:{s}")),
+            InstallEvent::Progress { label, .. } => seen.push(format!("P:{label}")),
+            _ => {}
+        };
+        let mut f = Funnel { on: &mut on, assets_live: true, side: String::new(), side_stage: None };
+        f.from_loader(InstallEvent::Stage("Установщик Forge 1.20.1-47.4.28".into()));
+        f.from_loader(InstallEvent::Stage("Установщик загрузчика работает (до пары минут)…".into()));
+        f.from_loader(InstallEvent::Progress { done: 1, total: 2, label: "Библиотеки загрузчика · 1/2".into() });
+        f.from_assets(InstallEvent::Progress { done: 1, total: 9, label: "Ресурсы · 1/9".into() });
+        f.assets_done();
+        f.from_loader(InstallEvent::Stage("после".into()));
+        assert_eq!(
+            seen,
+            vec![
+                "P:Ресурсы · 1/9 + Forge".to_string(),
+                "S:Установщик загрузчика работает (до пары минут)…".to_string(),
+                "S:после".to_string(),
+            ]
+        );
+    }
+
+    /// Fresh install into an empty folder with a timestamp per stage —
+    /// shows where the time goes. `MADRID_GAME=<dir>` keeps the folder,
+    /// `MADRID_LOADER=forge|fabric|vanilla`, `MADRID_MC=1.20.1`.
+    /// `cargo test --release live_install_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_install_timing() {
+        let mut cfg = crate::config::load();
+        let dir = std::env::var("MADRID_GAME").map(PathBuf::from).unwrap_or_else(|_| {
+            std::env::temp_dir().join(format!("sad-install-{}", std::process::id()))
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        cfg.game_dir = dir.display().to_string();
+        let mc = std::env::var("MADRID_MC").unwrap_or_else(|_| "1.20.1".into());
+        let loader = match std::env::var("MADRID_LOADER").as_deref() {
+            Ok("fabric") => Loader::Fabric,
+            Ok("vanilla") => Loader::Vanilla,
+            Ok("neoforge") => Loader::NeoForge,
+            _ => Loader::Forge,
+        };
+        let spec = Spec::new(&mc, loader, "");
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let t0 = std::time::Instant::now();
+        let start_bytes = crate::net::bytes_total();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampler = {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                let mut prev = crate::net::bytes_total();
+                let mut out = Vec::new();
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let now = crate::net::bytes_total();
+                    out.push(format!("{:.1}", (now - prev) as f64 / 5.0 / 1048576.0));
+                    prev = now;
+                }
+                out
+            })
+        };
+        let mut last_stage = (String::new(), 0.0f64, start_bytes);
+        let mut lines: Vec<String> = Vec::new();
+        let res = crate::net::rt().block_on(async {
+            let client = crate::net::client();
+            let mut on = |ev: InstallEvent| {
+                if let InstallEvent::Stage(s) = ev {
+                    let now = t0.elapsed().as_secs_f64();
+                    let bytes = crate::net::bytes_total();
+                    if !last_stage.0.is_empty() {
+                        let mb = (bytes - last_stage.2) as f64 / 1048576.0;
+                        lines.push(format!(
+                            "{:>7.2}s  {:<50} {:>6.2}s  {:>6.1} МБ",
+                            last_stage.1,
+                            last_stage.0,
+                            now - last_stage.1,
+                            mb
+                        ));
+                    }
+                    last_stage = (s, now, bytes);
+                }
+            };
+            let r = install(&client, &cfg, &spec, &cancel, &mut on).await;
+            let now = t0.elapsed().as_secs_f64();
+            let mb = (crate::net::bytes_total() - last_stage.2) as f64 / 1048576.0;
+            lines.push(format!(
+                "{:>7.2}s  {:<50} {:>6.2}s  {:>6.1} МБ",
+                last_stage.1,
+                last_stage.0,
+                now - last_stage.1,
+                mb
+            ));
+            r
+        });
+        stop.store(true, Ordering::Relaxed);
+        println!("МБ/с по 5 с: {}", sampler.join().unwrap_or_default().join(" "));
+        for l in &lines {
+            println!("{l}");
+        }
+        let total_mb = (crate::net::bytes_total() - start_bytes) as f64 / 1048576.0;
+        println!("ИТОГО {:.2}s, {:.1} МБ, {:?}", t0.elapsed().as_secs_f64(), total_mb, res.as_ref().map(|s| s.as_str()));
+        if std::env::var("MADRID_GAME").is_err() {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+        res.expect("install");
+    }
 }

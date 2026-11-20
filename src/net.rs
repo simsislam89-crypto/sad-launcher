@@ -89,8 +89,42 @@ pub fn bulk_client() -> reqwest::Client {
     .clone()
 }
 
+/// A few independent clients for thousands of small files (assets).
+/// Each keeps its own HTTP/2 connection: one connection carried all 128
+/// requests and its single TCP window capped small-file speed at
+/// ~4–8 МБ/с while big files on parallel connections reached 17 МБ/с.
+pub fn small_file_client(i: usize) -> reqwest::Client {
+    static POOL: OnceLock<Vec<reqwest::Client>> = OnceLock::new();
+    let pool = POOL.get_or_init(|| {
+        (0..SMALL_FILE_CONNECTIONS)
+            .map(|_| {
+                reqwest::Client::builder()
+                    .user_agent(format!(
+                        "MinecraftLauncherMadrid/{} (Windows)",
+                        crate::config::VERSION
+                    ))
+                    .connect_timeout(Duration::from_secs(12))
+                    .read_timeout(Duration::from_secs(40))
+                    .pool_idle_timeout(Duration::from_secs(30))
+                    .tcp_nodelay(true)
+                    .http2_adaptive_window(true)
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new())
+            })
+            .collect()
+    });
+    pool[i % pool.len()].clone()
+}
+
+/// Connections for small files (see [`small_file_client`]).
+pub const SMALL_FILE_CONNECTIONS: usize = 12;
+
 /// True when running on the shared runtime (where [`bulk_client`] may be
 /// used); isolated runtimes (server bootstrap) keep their own client.
+pub fn is_shared_rt() -> bool {
+    on_shared_rt()
+}
+
 fn on_shared_rt() -> bool {
     match (tokio::runtime::Handle::try_current(), RT.get()) {
         (Ok(cur), Some(rt)) => cur.id() == rt.handle().id(),
@@ -184,6 +218,10 @@ const HEAD_CHUNK: u64 = 2 * 1024 * 1024;
 const MIN_SEGMENT: u64 = 2 * 1024 * 1024;
 /// Parallel connections per big file.
 const MAX_SEGMENTS: u64 = 8;
+/// Extra range connections across all downloads at once. Assets start
+/// with their biggest files, 128 in flight: without a cap every one of
+/// them opened up to seven more connections (hundreds of TLS handshakes).
+static SEGMENTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(48);
 
 /// Downloads `url` into `dest` as fast as the link allows.
 ///
@@ -358,6 +396,7 @@ async fn fetch_segment(
     done: &AtomicU64,
     cancel: Option<&AtomicBool>,
 ) -> Result<u64> {
+    let _slot = SEGMENTS.acquire().await?;
     let want = end - start + 1;
     let mut got = 0u64;
     let mut attempt = 0u32;

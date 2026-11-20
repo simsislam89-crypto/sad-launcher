@@ -1,8 +1,11 @@
 [package]
 name = "sad-launcher"
-version = "0.7.2"
+version = "0.7.3"
 edition = "2021"
 description = "Sad Launcher — a black-and-white Minecraft launcher for Windows that hosts its own Forge server."
+
+[workspace]
+members = ["xtask"]
 
 [profile.release]
 opt-level = 3
