@@ -6,7 +6,7 @@ use crate::effects::{self, AppliedState, EffectModSpec, EffectsConfig};
 use crate::loader::Loader;
 use crate::theme::{self, Skin};
 use crate::widgets::{self, Btn};
-use egui::{RichText, Ui};
+use egui::{Align, Layout, RichText, Ui};
 
 impl Launcher {
     pub fn view_effects(&mut self, ui: &mut Ui, skin: &Skin) {
@@ -33,7 +33,7 @@ impl Launcher {
             ui,
             skin,
             "Эффекты",
-            "Применяются сразу во время игры: options.txt, SadEffects.zip, загрузка модов и автоматизация",
+            "Меняются прямо в игре: лаунчер обновляет ресурспак эффектов и сам перезагружает ресурсы (F3+T)",
             |ui| {
                 if !missing_mods.is_empty() && !is_vanilla && !downloading_mods {
                     let label = format!("Скачать моды ({})", missing_mods.len());
@@ -88,9 +88,9 @@ impl Launcher {
             });
             ui.add_space(3.0);
             let hint = if snap.mc_running {
-                "options.txt и SadEffects.zip обновляются прямо сейчас · Нажми F3+T в игре для обновления ресурспака; скачанные .jar моды включатся после перезапуска игры."
+                "Включил — через секунду видно в игре: огонь, оверлеи, погода, частицы, яркость, туман и набор ресурспаков меняются без перезапуска. Гамма, тряска камеры и скачанные моды — после перезапуска. Игра, запущенная до версии 0.7.7, подхватит пак после одного перезапуска."
             } else {
-                "Настройки сохраняются в options.txt и ресурспак SadEffects.zip сразу при изменении; моды ставятся в один клик прямо сюда."
+                "Настройки применяются сразу: при запуске игры всё уже включено, а во время игры меняется на лету."
             };
             ui.add(
                 egui::Label::new(RichText::new(hint).font(theme::body(11.5)).color(skin.faint()))
@@ -147,10 +147,10 @@ impl Launcher {
                     let fb_badge = readiness_badge(
                         self.effects.fullbright,
                         applied,
-                        minor < 19,
+                        true,
                         fb_mod_ok,
                         is_vanilla,
-                        "options.txt (до 1.18)",
+                        if minor >= 17 { "сразу в игре" } else { "options.txt" },
                         "мод Gamma Utils",
                     );
                     let fb_res = effect_row(
@@ -252,10 +252,10 @@ impl Launcher {
                     let fog_badge = readiness_badge(
                         self.effects.custom_fog,
                         applied,
-                        false,
+                        minor >= 17,
                         fog_mod_ok,
                         is_vanilla,
-                        "",
+                        "сразу в игре",
                         "мод NoFog / Fog",
                     );
                     let fog_res = effect_row(
@@ -263,7 +263,7 @@ impl Launcher {
                         skin,
                         &mut self.effects.custom_fog,
                         "Custom Fog (Кастомный туман)",
-                        "Отключает туман на дистанции прорисовки или меняет его плотность и цвет.",
+                        "Убирает туман или отодвигает его дальше — в воздухе, воде и лаве. С Sodium/Embeddium на ландшафт не действует.",
                         fog_badge,
                         if !fog_mod_ok && !is_vanilla && !downloading_mods {
                             Some("Скачать мод")
@@ -569,6 +569,62 @@ impl Launcher {
                                 auto_apply = true;
                             }
                         });
+                    }
+                });
+
+                ui.add_space(14.0);
+
+                // -------------------------------- 2½. Набор ресурспаков
+                ui.horizontal(|ui| {
+                    widgets::section_label(ui, skin, "НАБОР РЕСУРСПАКОВ · FPS И ЧИСТЫЙ ЭКРАН");
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let all_on = effects::RP_SET.iter().all(|p| self.effects.rp_set.iter().any(|s| s == p.slug));
+                        let label = if all_on { "Выключить все" } else { "Включить все" };
+                        if widgets::button_sized(ui, skin, label, Btn::Outline, true, 24.0, 10.5, 10.0).clicked() {
+                            if all_on {
+                                self.effects.rp_set.clear();
+                            } else {
+                                self.effects.rp_set = effects::RP_SET.iter().map(|p| p.slug.to_string()).collect();
+                            }
+                            changed = true;
+                            auto_apply = true;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                theme::card_frame(skin).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("Самые скачиваемые паки Modrinth без модов. Скачиваются один раз и вливаются в ресурспак эффектов — включаются и выключаются прямо в игре.")
+                                .font(theme::body(11.5))
+                                .color(skin.faint()),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(6.0);
+                    let fetching = self.rp_fetch_rx.is_some();
+                    for (i, pick) in effects::RP_SET.iter().enumerate() {
+                        if i > 0 {
+                            divider(ui, skin);
+                        }
+                        let mut on = self.effects.rp_set.iter().any(|s| s == pick.slug);
+                        let cached = effects::rp_cached(pick.slug, &spec.mc).is_file();
+                        let badge = match (on, cached) {
+                            (true, true) => Some(("в игре".to_string(), true)),
+                            (true, false) if fetching => Some(("скачиваю…".to_string(), false)),
+                            (true, false) => Some(("не скачался".to_string(), false)),
+                            (false, _) => None,
+                        };
+                        let res = effect_row(ui, skin, &mut on, pick.title, pick.desc, badge, None);
+                        if res.toggled {
+                            self.effects.rp_set.retain(|s| s != pick.slug);
+                            if on {
+                                self.effects.rp_set.push(pick.slug.to_string());
+                            }
+                            changed = true;
+                            auto_apply = true;
+                        }
                     }
                 });
 

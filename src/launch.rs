@@ -225,7 +225,11 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
         quiet_version_check(&instance);
     }
     let effects_cfg = crate::effects::load();
-    if let Err(e) = crate::effects::apply_to_instance(&instance, &resolved.id, &effects_cfg) {
+    // The vanilla jar's name is the Minecraft version; its shaders feed the
+    // live fullbright / fog of the effects pack.
+    let mc = resolved.client_jar.file_stem().and_then(|s| s.to_str()).unwrap_or(&resolved.id).to_string();
+    let jar = resolved.client_jar.is_file().then_some(resolved.client_jar.as_path());
+    if let Err(e) = crate::effects::apply_to_instance(&instance, &mc, &effects_cfg, jar) {
         shared.log(crate::shared::LogKind::Warn, format!("Эффекты не применились: {e:#}"));
     }
     crate::util::prefer_dedicated_gpu(&java.path);

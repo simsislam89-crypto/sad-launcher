@@ -52,6 +52,22 @@ impl Default for AutomationSnapshot {
     }
 }
 
+/// Makes a running Minecraft reload its resource packs (F3+T) so a changed
+/// effects pack shows at once. Runs on its own thread (it waits between
+/// keys); false when no game window was found.
+pub fn reload_game_resources(child_pid: u32) -> bool {
+    let (found, hwnd, _) = platform::find_minecraft_window(child_pid);
+    if !found {
+        return false;
+    }
+    std::thread::Builder::new()
+        .name("sad-reload".into())
+        .spawn(move || {
+            platform::send_reload_keys(hwnd);
+        })
+        .is_ok()
+}
+
 pub fn clamp_interval_secs(secs: u32) -> u32 {
     secs.clamp(5, 3600)
 }
@@ -477,6 +493,34 @@ mod platform {
         fn timeEndPeriod(u_period: u32) -> u32;
     }
 
+    /// F3+T into the game window as posted key messages: Minecraft reloads
+    /// its resource packs (the effects pack among them) without focus and
+    /// without the player pressing anything. Scan codes ride in lParam —
+    /// GLFW maps keys by scan code.
+    pub(super) fn send_reload_keys(hwnd: usize) -> bool {
+        const VK_F3: usize = 0x72;
+        const VK_T: usize = 0x54;
+        const SC_F3: isize = 0x3D;
+        const SC_T: isize = 0x14;
+        if hwnd == 0 {
+            return false;
+        }
+        let h = hwnd as *mut c_void;
+        let down = |sc: isize| 1isize | (sc << 16);
+        let up = |sc: isize| 1isize | (sc << 16) | (1isize << 30) | (1isize << 31);
+        // SAFETY: posting messages to a window handle only queues them; a
+        // stale handle makes PostMessageW fail, nothing else.
+        unsafe {
+            PostMessageW(h, WM_KEYDOWN, VK_F3, down(SC_F3));
+            std::thread::sleep(Duration::from_millis(40));
+            PostMessageW(h, WM_KEYDOWN, VK_T, down(SC_T));
+            std::thread::sleep(Duration::from_millis(40));
+            PostMessageW(h, WM_KEYUP, VK_T, up(SC_T));
+            std::thread::sleep(Duration::from_millis(40));
+            PostMessageW(h, WM_KEYUP, VK_F3, up(SC_F3)) != 0
+        }
+    }
+
     pub(super) fn fine_timer(on: bool) {
         unsafe {
             if on {
@@ -743,6 +787,10 @@ mod platform {
     }
 
     pub(super) fn send_mouse_click(_rmb: bool) {}
+
+    pub(super) fn send_reload_keys(_hwnd: usize) -> bool {
+        false
+    }
 
     pub(super) fn fine_timer(_on: bool) {}
 

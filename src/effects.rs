@@ -1,6 +1,12 @@
 //! Эффекты — настройки освещения, видимости в жидкостях и очистки экрана.
-//! Применяются к активной сборке в чистом Rust: патчит `options.txt` и
-//! генерирует ресурспак `resourcepacks/SadEffects.zip` с нужными текстурами.
+//!
+//! Всё, что можно, меняется ПРЯМО В ИГРЕ: эффекты живут в ресурспаке-папке
+//! `resourcepacks/SadEffects/`, который всегда включён в сборке. Лаунчер
+//! переписывает его файлы и шлёт окну игры F3+T — Minecraft перечитывает
+//! ресурсы за секунду, без перезапуска. Яркость и туман — через core-шейдеры
+//! (`shaders/include/light.glsl`, `fog.glsl`), взятые из клиента этой же
+//! версии и пропатченные; набор FPS-ресурспаков с Modrinth вливается в ту же
+//! папку. `options.txt` (гамма, тряска камеры, частицы) — после перезапуска.
 
 use crate::config::Config;
 use crate::loader::{Loader, Spec};
@@ -8,7 +14,7 @@ use crate::mods::{self, InstalledMod, ModEvent, ModHit};
 use anyhow::{bail, Context, Result};
 use image::{ImageFormat, Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
-use std::io::{Cursor, Write};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -62,7 +68,30 @@ pub struct EffectsConfig {
     pub autoclicker_ms: u32,
     pub autoclicker_rmb: bool,
     pub autoclicker_bind: String,
+
+    /// Ресурспаки набора «FPS и чистый экран» (slug Modrinth), влитые в
+    /// SadEffects — включаются и выключаются прямо в игре.
+    pub rp_set: Vec<String>,
 }
+
+/// Один ресурспак набора.
+pub struct RpPick {
+    pub slug: &'static str,
+    pub title: &'static str,
+    pub desc: &'static str,
+}
+
+/// Набор «FPS и чистый экран»: самые скачиваемые паки Modrinth, которым не
+/// нужны моды, — меньше огня и щита на экране, прозрачное стекло, лёгкие
+/// и понятные текстуры.
+pub const RP_SET: [RpPick; 6] = [
+    RpPick { slug: "low-fire-pack", title: "Низкий огонь", desc: "Огонь на экране в 2 раза ниже — видно, куда бежать (8 млн скачиваний)" },
+    RpPick { slug: "low-shield-pack", title: "Низкий щит", desc: "Щит не закрывает пол-экрана (5,9 млн)" },
+    RpPick { slug: "clear-glass", title: "Чистое стекло", desc: "Стекло без рамок и разводов (414 тыс.)" },
+    RpPick { slug: "fast-better-grass", title: "Быстрая трава", desc: "Трава по бокам блоков без потерь FPS (14 млн)" },
+    RpPick { slug: "even-better-enchants", title: "Понятные зачарования", desc: "Цвет книги показывает зачарование (5,4 млн)" },
+    RpPick { slug: "better-lanterns", title: "Аккуратные фонари", desc: "Фонари и цепи без лишних пикселей (4 млн)" },
+];
 
 impl Default for EffectsConfig {
     fn default() -> Self {
@@ -109,20 +138,12 @@ impl Default for EffectsConfig {
             autoclicker_ms: 10,
             autoclicker_rmb: false,
             autoclicker_bind: "F6".into(),
+            rp_set: Vec::new(),
         }
     }
 }
 
 impl EffectsConfig {
-    pub fn needs_resourcepack(&self) -> bool {
-        self.no_fire
-            || self.no_weather
-            || (self.no_fluid && self.no_fluid_water)
-            || (self.no_overlay && (self.ov_pumpkin || self.ov_snow || self.ov_totem))
-            || (self.no_particles
-                && (self.part_explosions || self.part_smoke || self.part_potions || self.part_blocks))
-    }
-
     pub fn active_count(&self) -> usize {
         [
             self.fullbright,
@@ -273,12 +294,7 @@ pub fn missing_mod_targets(
 }
 
 pub fn inspect_instance_applied(instance: &Path, cfg: &EffectsConfig) -> AppliedState {
-    let pack_path = instance.join("resourcepacks").join("SadEffects.zip");
-    let pack_ok = if cfg.needs_resourcepack() {
-        pack_path.is_file()
-    } else {
-        !pack_path.exists()
-    };
+    let pack_ok = instance.join("resourcepacks").join(PACK_DIR).join("pack.mcmeta").is_file();
     let options_path = instance.join("options.txt");
     let existing = std::fs::read_to_string(&options_path).unwrap_or_default();
     let patched = patch_options_text(&existing, cfg);
@@ -467,110 +483,330 @@ fn low_fire_png(soul: bool) -> Result<Vec<u8>> {
     png_bytes(&img)
 }
 
-fn build_pack_zip(mc_version: &str, cfg: &EffectsConfig) -> Result<Vec<u8>> {
-    let mut buf = Cursor::new(Vec::new());
-    {
-        let mut zip = zip::ZipWriter::new(&mut buf);
-        let opts = zip::write::SimpleFileOptions::default();
+/// Files of the SadEffects pack: (path inside the pack, bytes).
+type PackFiles = Vec<(String, Vec<u8>)>;
 
-        let mcmeta = format!(
-            "{{\"pack\":{{\"pack_format\":{},\"description\":\"Sad Launcher: Эффекты\"}}}}",
-            pack_format_for_mc(mc_version)
-        );
-        zip.start_file("pack.mcmeta", opts)?;
-        zip.write_all(mcmeta.as_bytes())?;
-
-        let blank = transparent_png(16)?;
-
-        if cfg.no_fire {
-            let normal = if cfg.no_fire_hide { blank.clone() } else { low_fire_png(false)? };
-            let soul = if cfg.no_fire_hide { blank.clone() } else { low_fire_png(true)? };
-            for (name, bytes) in [
-                ("assets/minecraft/textures/block/fire_0.png", &normal),
-                ("assets/minecraft/textures/block/fire_1.png", &normal),
-                ("assets/minecraft/textures/block/soul_fire_0.png", &soul),
-                ("assets/minecraft/textures/block/soul_fire_1.png", &soul),
-            ] {
-                zip.start_file(name, opts)?;
-                zip.write_all(bytes)?;
-                zip.start_file(format!("{name}.mcmeta"), opts)?;
-                zip.write_all(b"{\"animation\":{\"frametime\":2}}")?;
-            }
-        }
-
-        if cfg.no_fluid && cfg.no_fluid_water {
-            zip.start_file("assets/minecraft/textures/misc/underwater.png", opts)?;
-            zip.write_all(&blank)?;
-        }
-
-        if cfg.no_overlay {
-            if cfg.ov_pumpkin {
-                zip.start_file("assets/minecraft/textures/misc/pumpkinblur.png", opts)?;
-                zip.write_all(&blank)?;
-            }
-            if cfg.ov_snow {
-                zip.start_file("assets/minecraft/textures/misc/powder_snow_outline.png", opts)?;
-                zip.write_all(&blank)?;
-            }
-            if cfg.ov_totem {
-                zip.start_file("assets/minecraft/textures/item/totem_of_undying.png", opts)?;
-                zip.write_all(&blank)?;
-            }
-        }
-
-        if cfg.no_weather {
-            for p in [
-                "assets/minecraft/textures/environment/rain.png",
-                "assets/minecraft/textures/environment/snow.png",
-            ] {
-                zip.start_file(p, opts)?;
-                zip.write_all(&blank)?;
-            }
-        }
-
-        if cfg.no_particles {
-            if cfg.part_explosions {
-                for i in 0..16 {
-                    zip.start_file(format!("assets/minecraft/textures/particle/explosion_{i}.png"), opts)?;
-                    zip.write_all(&blank)?;
-                }
-                zip.start_file("assets/minecraft/textures/particle/flash.png", opts)?;
-                zip.write_all(&blank)?;
-            }
-            if cfg.part_smoke {
-                for i in 0..8 {
-                    zip.start_file(format!("assets/minecraft/textures/particle/generic_{i}.png"), opts)?;
-                    zip.write_all(&blank)?;
-                }
-                for i in 0..12 {
-                    zip.start_file(format!("assets/minecraft/textures/particle/big_smoke_{i}.png"), opts)?;
-                    zip.write_all(&blank)?;
-                }
-            }
-            if cfg.part_potions {
-                for i in 0..8 {
-                    zip.start_file(format!("assets/minecraft/textures/particle/effect_{i}.png"), opts)?;
-                    zip.write_all(&blank)?;
-                    zip.start_file(format!("assets/minecraft/textures/particle/spell_{i}.png"), opts)?;
-                    zip.write_all(&blank)?;
-                }
-                zip.start_file("assets/minecraft/textures/particle/glint.png", opts)?;
-                zip.write_all(&blank)?;
-            }
-            if cfg.part_blocks {
-                for name in ["crit.png", "enchanted_hit.png"] {
-                    zip.start_file(format!("assets/minecraft/textures/particle/{name}"), opts)?;
-                    zip.write_all(&blank)?;
-                }
-            }
-        }
-
-        zip.finish()?;
-    }
-    Ok(buf.into_inner())
+/// `vec4 name(type a, type b) {` → (start of `vec4`, parameter names).
+fn find_function(src: &str, ret: &str, name: &str) -> Option<(usize, Vec<String>)> {
+    let sig = format!("{ret} {name}(");
+    let at = src.find(&sig)?;
+    let open = at + sig.len();
+    let close = open + src[open..].find(')')?;
+    let names = src[open..close]
+        .split(',')
+        .filter_map(|p| p.split_whitespace().last().map(|n| n.trim().to_string()))
+        .filter(|n| !n.is_empty())
+        .collect();
+    Some((at, names))
 }
 
-const PACK_ENTRY: &str = "file/SadEffects.zip";
+/// Renames `ret name(` to `ret sad_orig_name(` and appends `wrapper`
+/// (which calls the original under the new name). None when not found.
+fn wrap_function(src: &str, ret: &str, name: &str, wrapper: impl Fn(&[String], &str) -> String) -> Option<String> {
+    let (at, params) = find_function(src, ret, name)?;
+    let orig = format!("sad_orig_{name}");
+    let sig_end = at + src[at..].find('(')?;
+    let close = sig_end + src[sig_end..].find(')')?;
+    let params_text = &src[sig_end + 1..close];
+    let mut out = String::with_capacity(src.len() + 400);
+    out.push_str(&src[..at]);
+    out.push_str(&format!("{ret} {orig}"));
+    out.push_str(&src[at + ret.len() + 1 + name.len()..]);
+    out.push_str(&format!("\n\n// Sad Launcher\n{ret} {name}({params_text}) {{\n    {}\n}}\n", wrapper(&params, &orig)));
+    Some(out)
+}
+
+/// Fullbright that works live: the lightmap sample is pulled towards
+/// white by `strength` (0..1). Patched from the game's own `light.glsl`.
+pub fn patch_light_glsl(src: &str, strength: f32) -> Option<String> {
+    let k = strength.clamp(0.0, 1.0);
+    wrap_function(src, "vec4", "minecraft_sample_lightmap", |p, orig| {
+        format!("return mix({orig}({}), vec4(1.0), {k:.3});", p.join(", "))
+    })
+}
+
+/// Fog off (`disable`) or pushed `scale` times farther, live. Covers air,
+/// water and lava fog — the vanilla renderer draws all three through
+/// `linear_fog` / `linear_fog_fade`.
+pub fn patch_fog_glsl(src: &str, disable: bool, scale: f32) -> Option<String> {
+    let scale = scale.clamp(1.0, 64.0);
+    let scaled_args = |p: &[String]| -> String {
+        p.iter()
+            .map(|n| {
+                let l = n.to_ascii_lowercase();
+                if l.contains("start") || l.contains("end") {
+                    format!("{n} * {scale:.2}")
+                } else {
+                    n.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let step = wrap_function(src, "vec4", "linear_fog", |p, orig| {
+        if disable {
+            format!("return {};", p.first().map(|s| s.as_str()).unwrap_or("vec4(0.0)"))
+        } else {
+            format!("return {orig}({});", scaled_args(p))
+        }
+    })?;
+    // Clouds and sky fade use the second function (absent in some versions).
+    Some(
+        wrap_function(&step, "float", "linear_fog_fade", |p, orig| {
+            if disable {
+                "return 1.0;".to_string()
+            } else {
+                format!("return {orig}({});", scaled_args(p))
+            }
+        })
+        .unwrap_or(step),
+    )
+}
+
+/// A text file from the game's client jar.
+fn jar_text(jar: &Path, name: &str) -> Option<String> {
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(jar).ok()?).ok()?;
+    let mut entry = zip.by_name(name).ok()?;
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut entry, &mut text).ok()?;
+    Some(text)
+}
+
+/// Where downloaded set packs are kept (shared by all builds).
+pub fn rp_cache_dir() -> PathBuf {
+    crate::config::data_dir().join("meta").join("rp-cache")
+}
+
+/// Cached zip of a set pack for this Minecraft version.
+pub fn rp_cached(slug: &str, mc: &str) -> PathBuf {
+    let mc = mc.split('-').next().unwrap_or(mc);
+    rp_cache_dir().join(format!("{slug}-{mc}.zip"))
+}
+
+/// Downloads the set packs that are switched on but not cached yet:
+/// the version made for this Minecraft, or the newest one.
+pub async fn fetch_set_packs(client: &reqwest::Client, mc: &str, slugs: &[String]) -> Result<Vec<String>> {
+    #[derive(Deserialize)]
+    struct V {
+        #[serde(default)]
+        files: Vec<F>,
+    }
+    #[derive(Deserialize)]
+    struct F {
+        url: String,
+        #[serde(default)]
+        primary: bool,
+    }
+    let base = mc.split('-').next().unwrap_or(mc).to_string();
+    let mut fetched = Vec::new();
+    for slug in slugs {
+        let dest = rp_cached(slug, &base);
+        if dest.is_file() {
+            continue;
+        }
+        let mut url = None;
+        for filter in [format!("?game_versions=[\"{base}\"]"), String::new()] {
+            let list: Vec<V> = client
+                .get(format!("https://api.modrinth.com/v2/project/{slug}/version{filter}"))
+                .send()
+                .await
+                .context("Modrinth не отвечает")?
+                .json()
+                .await
+                .unwrap_or_default();
+            if let Some(v) = list.into_iter().find(|v| !v.files.is_empty()) {
+                let f = v.files.iter().find(|f| f.primary).unwrap_or(&v.files[0]);
+                url = Some(f.url.clone());
+                break;
+            }
+        }
+        let Some(url) = url.filter(|u| u.starts_with("https://")) else {
+            continue;
+        };
+        std::fs::create_dir_all(rp_cache_dir())?;
+        crate::minecraft::download_file(client, &url, &dest, None).await?;
+        fetched.push(slug.clone());
+    }
+    Ok(fetched)
+}
+
+/// `assets/…` files of a downloaded pack (never outside `assets/`, no
+/// absolute paths or `..`; at most 64 МБ unpacked).
+fn set_pack_assets(zip_path: &Path) -> Vec<(String, Vec<u8>)> {
+    let Ok(file) = std::fs::File::open(zip_path) else {
+        return Vec::new();
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(file) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut total = 0u64;
+    for i in 0..zip.len() {
+        let Ok(mut entry) = zip.by_index(i) else { continue };
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().replace('\\', "/");
+        if !name.starts_with("assets/") || name.contains("..") || name.contains(':') {
+            continue;
+        }
+        total += entry.size();
+        if total > 64 * 1024 * 1024 {
+            break;
+        }
+        let mut bytes = Vec::with_capacity(entry.size() as usize);
+        if std::io::Read::read_to_end(&mut entry, &mut bytes).is_ok() {
+            out.push((name, bytes));
+        }
+    }
+    out
+}
+
+/// Everything the SadEffects pack holds for `cfg`. Set packs go first so
+/// the launcher's own textures win where both change the same file.
+fn pack_files(mc_version: &str, cfg: &EffectsConfig, client_jar: Option<&Path>) -> Result<PackFiles> {
+    let mut files: PackFiles = Vec::new();
+    let put = |files: &mut PackFiles, name: String, bytes: Vec<u8>| {
+        files.retain(|(n, _)| *n != name);
+        files.push((name, bytes));
+    };
+    let mcmeta = format!(
+        "{{\"pack\":{{\"pack_format\":{},\"supported_formats\":[1,99],\"description\":\"Sad Launcher: эффекты (меняются из лаунчера прямо в игре)\"}}}}",
+        pack_format_for_mc(mc_version)
+    );
+    put(&mut files, "pack.mcmeta".into(), mcmeta.into_bytes());
+
+    for slug in &cfg.rp_set {
+        for (name, bytes) in set_pack_assets(&rp_cached(slug, mc_version)) {
+            put(&mut files, name, bytes);
+        }
+    }
+
+    let blank = transparent_png(16)?;
+    if cfg.no_fire {
+        let normal = if cfg.no_fire_hide { blank.clone() } else { low_fire_png(false)? };
+        let soul = if cfg.no_fire_hide { blank.clone() } else { low_fire_png(true)? };
+        for (name, bytes) in [
+            ("assets/minecraft/textures/block/fire_0.png", &normal),
+            ("assets/minecraft/textures/block/fire_1.png", &normal),
+            ("assets/minecraft/textures/block/soul_fire_0.png", &soul),
+            ("assets/minecraft/textures/block/soul_fire_1.png", &soul),
+        ] {
+            put(&mut files, name.into(), bytes.clone());
+            put(&mut files, format!("{name}.mcmeta"), b"{\"animation\":{\"frametime\":2}}".to_vec());
+        }
+    }
+    if cfg.no_fluid && cfg.no_fluid_water {
+        put(&mut files, "assets/minecraft/textures/misc/underwater.png".into(), blank.clone());
+    }
+    if cfg.no_overlay {
+        if cfg.ov_pumpkin {
+            put(&mut files, "assets/minecraft/textures/misc/pumpkinblur.png".into(), blank.clone());
+            put(&mut files, "assets/minecraft/textures/misc/vignette.png".into(), blank.clone());
+        }
+        if cfg.ov_snow {
+            put(&mut files, "assets/minecraft/textures/misc/powder_snow_outline.png".into(), blank.clone());
+        }
+        if cfg.ov_totem {
+            put(&mut files, "assets/minecraft/textures/item/totem_of_undying.png".into(), blank.clone());
+        }
+    }
+    if cfg.no_weather {
+        for p in ["assets/minecraft/textures/environment/rain.png", "assets/minecraft/textures/environment/snow.png"] {
+            put(&mut files, p.into(), blank.clone());
+        }
+    }
+    if cfg.no_particles {
+        if cfg.part_explosions {
+            for i in 0..16 {
+                put(&mut files, format!("assets/minecraft/textures/particle/explosion_{i}.png"), blank.clone());
+            }
+            put(&mut files, "assets/minecraft/textures/particle/flash.png".into(), blank.clone());
+        }
+        if cfg.part_smoke {
+            for i in 0..8 {
+                put(&mut files, format!("assets/minecraft/textures/particle/generic_{i}.png"), blank.clone());
+            }
+            for i in 0..12 {
+                put(&mut files, format!("assets/minecraft/textures/particle/big_smoke_{i}.png"), blank.clone());
+            }
+        }
+        if cfg.part_potions {
+            for i in 0..8 {
+                put(&mut files, format!("assets/minecraft/textures/particle/effect_{i}.png"), blank.clone());
+                put(&mut files, format!("assets/minecraft/textures/particle/spell_{i}.png"), blank.clone());
+            }
+            put(&mut files, "assets/minecraft/textures/particle/glint.png".into(), blank.clone());
+        }
+        if cfg.part_blocks {
+            for name in ["crit.png", "enchanted_hit.png"] {
+                put(&mut files, format!("assets/minecraft/textures/particle/{name}"), blank.clone());
+            }
+        }
+    }
+
+    // Live lighting / fog through the game's own core shaders.
+    if let Some(jar) = client_jar {
+        if cfg.fullbright {
+            let strength = ((cfg.fullbright_gamma - 1.0) / 14.0).clamp(0.15, 1.0);
+            if let Some(patched) = jar_text(jar, "assets/minecraft/shaders/include/light.glsl")
+                .and_then(|src| patch_light_glsl(&src, strength))
+            {
+                put(&mut files, "assets/minecraft/shaders/include/light.glsl".into(), patched.into_bytes());
+            }
+        }
+        let fog_off = (cfg.custom_fog && cfg.fog_disable) || cfg.no_fluid;
+        let fog_scale = if cfg.custom_fog && !cfg.fog_disable { 1.0 / cfg.fog_density.max(0.05) } else { 1.0 };
+        if fog_off || fog_scale > 1.01 {
+            if let Some(patched) = jar_text(jar, "assets/minecraft/shaders/include/fog.glsl")
+                .and_then(|src| patch_fog_glsl(&src, fog_off, fog_scale))
+            {
+                put(&mut files, "assets/minecraft/shaders/include/fog.glsl".into(), patched.into_bytes());
+            }
+        }
+    }
+    Ok(files)
+}
+
+/// Writes `files` into the pack folder: only what changed is written,
+/// files that are no longer part of the pack are removed. True if anything
+/// on disk changed (then the running game should reload).
+fn write_pack_dir(dir: &Path, files: &PackFiles) -> Result<bool> {
+    std::fs::create_dir_all(dir)?;
+    let mut changed = false;
+    let wanted: std::collections::HashSet<PathBuf> = files.iter().map(|(n, _)| dir.join(n)).collect();
+    for (name, bytes) in files {
+        let path = dir.join(name);
+        if std::fs::read(&path).map(|old| old == *bytes).unwrap_or(false) {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, bytes).with_context(|| format!("Не записать {name}"))?;
+        changed = true;
+    }
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if !wanted.contains(&p) {
+                let _ = std::fs::remove_file(&p);
+                changed = true;
+            }
+        }
+    }
+    Ok(changed)
+}
+
+/// The pack folder inside `resourcepacks/` and its options.txt entry.
+pub const PACK_DIR: &str = "SadEffects";
+const PACK_ENTRY: &str = "file/SadEffects";
+/// Before 0.7.7 the pack was a zip — removed on the next apply.
+const LEGACY_ENTRY: &str = "file/SadEffects.zip";
 
 fn set_option_kv(lines: &mut Vec<String>, key: &str, val: String) {
     let prefix = format!("{key}:");
@@ -620,7 +856,9 @@ pub fn patch_options_text(existing: &str, cfg: &EffectsConfig) -> String {
         set_option_kv(&mut lines, "particles", "2".into());
     }
 
-    let want_pack = cfg.needs_resourcepack();
+    // The pack is always on: switching effects only rewrites its files and
+    // the running game reloads them (F3+T) — no restart, no options edit.
+    let want_pack = true;
     let mut found_packs = false;
     for line in &mut lines {
         if let Some(raw) = line.strip_prefix("resourcePacks:") {
@@ -629,7 +867,7 @@ pub fn patch_options_text(existing: &str, cfg: &EffectsConfig) -> String {
             if !list.iter().any(|x| x == "vanilla") {
                 list.insert(0, "vanilla".into());
             }
-            list.retain(|x| x != PACK_ENTRY);
+            list.retain(|x| x != PACK_ENTRY && x != LEGACY_ENTRY);
             if want_pack {
                 list.push(PACK_ENTRY.into());
             }
@@ -648,39 +886,39 @@ pub fn patch_options_text(existing: &str, cfg: &EffectsConfig) -> String {
     out
 }
 
-/// Applies `cfg` to `instance`: generates/removes `resourcepacks/SadEffects.zip`
-/// and updates `options.txt`.
-pub fn apply_to_instance(instance: &Path, mc_version: &str, cfg: &EffectsConfig) -> Result<ApplyReport> {
+/// Applies `cfg` to `instance`: rewrites `resourcepacks/SadEffects/`
+/// (`pack_written` = something changed → reload a running game) and
+/// updates `options.txt`. `client_jar` feeds the live shader effects.
+pub fn apply_to_instance(
+    instance: &Path,
+    mc_version: &str,
+    cfg: &EffectsConfig,
+    client_jar: Option<&Path>,
+) -> Result<ApplyReport> {
     std::fs::create_dir_all(instance).context("Не создать папку сборки")?;
     let rp_dir = instance.join("resourcepacks");
-    let pack_path = rp_dir.join("SadEffects.zip");
-
-    let pack_written = if cfg.needs_resourcepack() {
-        std::fs::create_dir_all(&rp_dir)?;
-        let bytes = build_pack_zip(mc_version, cfg)?;
-        std::fs::write(&pack_path, bytes).context("Не записать ресурспак SadEffects.zip")?;
-        true
-    } else {
-        if pack_path.exists() {
-            let _ = std::fs::remove_file(&pack_path);
-        }
-        false
-    };
+    let legacy = rp_dir.join("SadEffects.zip");
+    if legacy.exists() {
+        let _ = std::fs::remove_file(&legacy);
+    }
+    let files = pack_files(mc_version, cfg, client_jar)?;
+    let pack_written = write_pack_dir(&rp_dir.join(PACK_DIR), &files).context("Не записать ресурспак SadEffects")?;
 
     let options_path = instance.join("options.txt");
     let existing = std::fs::read_to_string(&options_path).unwrap_or_default();
     let updated = patch_options_text(&existing, cfg);
-    // Nothing to change → nothing written (an empty options.txt used to be
-    // created in every build without one).
     let options_updated = updated != existing;
     if options_updated {
         std::fs::write(&options_path, updated).context("Не обновить options.txt")?;
     }
+    Ok(ApplyReport { pack_written, options_updated })
+}
 
-    Ok(ApplyReport {
-        pack_written,
-        options_updated,
-    })
+/// The vanilla client jar of `mc` in the shared game folder.
+pub fn client_jar(cfg: &Config, mc: &str) -> Option<PathBuf> {
+    let mc = mc.split('-').next().unwrap_or(mc);
+    let jar = cfg.game_dir().join("versions").join(mc).join(format!("{mc}.jar"));
+    jar.is_file().then_some(jar)
 }
 
 #[cfg(test)]
@@ -708,7 +946,7 @@ mod tests {
         assert!(patched.contains("fov:90.0"));
         assert!(patched.contains("gamma:15.0"));
         assert!(patched.contains("damageTiltStrength:0.0"));
-        assert!(patched.contains("file/SadEffects.zip"));
+        assert!(patched.contains("\"file/SadEffects\""));
 
         cfg.fullbright = false;
         cfg.no_hurt_cam = false;
@@ -716,23 +954,72 @@ mod tests {
         let restored = patch_options_text(&patched, &cfg);
         assert!(restored.contains("gamma:1.0"));
         assert!(restored.contains("damageTiltStrength:1.0"));
-        assert!(!restored.contains("file/SadEffects.zip"));
+        // The pack stays on (effects switch live inside it); the old zip goes.
+        assert!(restored.contains("\"file/SadEffects\""));
+        let legacy = patch_options_text("resourcePacks:[\"vanilla\",\"file/SadEffects.zip\"]\n", &cfg);
+        assert!(!legacy.contains("SadEffects.zip"));
     }
 
     #[test]
-    fn builds_valid_sad_effects_zip_with_requested_textures() {
+    fn pack_holds_requested_textures_and_folder_follows_it() {
         let mut cfg = EffectsConfig::default();
         cfg.no_fire = true;
         cfg.no_overlay = true;
         cfg.no_weather = true;
         cfg.no_particles = true;
-        let bytes = build_pack_zip("1.20.1", &cfg).unwrap();
-        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
-        assert!(zip.by_name("pack.mcmeta").is_ok());
-        assert!(zip.by_name("assets/minecraft/textures/block/fire_0.png").is_ok());
-        assert!(zip.by_name("assets/minecraft/textures/misc/pumpkinblur.png").is_ok());
-        assert!(zip.by_name("assets/minecraft/textures/environment/rain.png").is_ok());
-        assert!(zip.by_name("assets/minecraft/textures/particle/explosion_0.png").is_ok());
+        let files = pack_files("1.20.1", &cfg, None).unwrap();
+        let has = |n: &str| files.iter().any(|(f, _)| f == n);
+        assert!(has("pack.mcmeta"));
+        assert!(has("assets/minecraft/textures/block/fire_0.png"));
+        assert!(has("assets/minecraft/textures/misc/pumpkinblur.png"));
+        assert!(has("assets/minecraft/textures/environment/rain.png"));
+        assert!(has("assets/minecraft/textures/particle/explosion_0.png"));
+
+        let dir = std::env::temp_dir().join(format!("sad-fx-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(write_pack_dir(&dir, &files).unwrap());
+        assert!(!write_pack_dir(&dir, &files).unwrap(), "same files — nothing to reload");
+        cfg.no_fire = false;
+        let fewer = pack_files("1.20.1", &cfg, None).unwrap();
+        assert!(write_pack_dir(&dir, &fewer).unwrap());
+        assert!(!dir.join("assets/minecraft/textures/block/fire_0.png").exists(), "fire file removed live");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    const LIGHT_1_20: &str = "#version 150\n\nvec4 minecraft_mix_light(vec3 a, vec3 b, vec3 n, vec4 color) {\n    return color;\n}\n\nvec4 minecraft_sample_lightmap(sampler2D lightMap, ivec2 uv) {\n    return texture(lightMap, clamp(uv / 256.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));\n}\n";
+    const FOG_1_20: &str = "#version 150\n\nvec4 linear_fog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {\n    return inColor;\n}\n\nfloat linear_fog_fade(float vertexDistance, float fogStart, float fogEnd) {\n    return 1.0;\n}\n";
+
+    #[test]
+    fn light_shader_keeps_original_and_adds_wrapper() {
+        let out = patch_light_glsl(LIGHT_1_20, 1.0).unwrap();
+        assert!(out.contains("vec4 sad_orig_minecraft_sample_lightmap(sampler2D lightMap, ivec2 uv)"));
+        assert!(out.contains("vec4 minecraft_sample_lightmap(sampler2D lightMap, ivec2 uv) {"));
+        assert!(out.contains("return mix(sad_orig_minecraft_sample_lightmap(lightMap, uv), vec4(1.0), 1.000);"));
+        assert!(out.contains("vec4 minecraft_mix_light("), "other functions untouched");
+        assert!(patch_light_glsl("#version 150\n", 1.0).is_none(), "unknown shader → no patch");
+    }
+
+    #[test]
+    fn fog_shader_off_or_farther() {
+        let off = patch_fog_glsl(FOG_1_20, true, 1.0).unwrap();
+        assert!(off.contains("vec4 linear_fog(vec4 inColor, float vertexDistance, float fogStart, float fogEnd, vec4 fogColor) {\n    return inColor;"));
+        assert!(off.contains("float linear_fog_fade(float vertexDistance, float fogStart, float fogEnd) {\n    return 1.0;"));
+        let far = patch_fog_glsl(FOG_1_20, false, 4.0).unwrap();
+        assert!(far.contains("return sad_orig_linear_fog(inColor, vertexDistance, fogStart * 4.00, fogEnd * 4.00, fogColor);"));
+    }
+
+    /// The real 1.20.1 shaders from the installed client, when present.
+    #[test]
+    fn real_client_shaders_patch() {
+        let jar = crate::config::data_dir().join("game/versions/1.20.1/1.20.1.jar");
+        if !jar.is_file() {
+            return;
+        }
+        let light = jar_text(&jar, "assets/minecraft/shaders/include/light.glsl").unwrap();
+        assert!(patch_light_glsl(&light, 0.8).is_some());
+        let fog = jar_text(&jar, "assets/minecraft/shaders/include/fog.glsl").unwrap();
+        let out = patch_fog_glsl(&fog, true, 1.0).unwrap();
+        assert!(out.contains("float fog_distance("), "rest of fog.glsl kept");
     }
 
     #[test]

@@ -753,6 +753,8 @@ pub struct Launcher {
     pub effects_status: Option<(bool, String)>,
     /// Effects changed but not yet written to effects.json (slider drag).
     pub effects_dirty: bool,
+    /// Set packs being downloaded (Modrinth) for the effects pack.
+    pub rp_fetch_rx: Option<Receiver<Result<Vec<String>, String>>>,
     /// Settings changed but config.json not yet written (slider drag).
     pub cfg_dirty: bool,
     /// options.txt / SadEffects.zip check for the Effects tab: re-read at
@@ -1328,6 +1330,7 @@ impl Launcher {
             effects_status: None,
             effects_applied: None,
             effects_dirty: false,
+            rp_fetch_rx: None,
             cfg_dirty: false,
             effects_mod_task: None,
             automation,
@@ -2073,18 +2076,20 @@ impl Launcher {
         let instance = self.cfg.instance_dir();
         let spec = self.active_spec();
         let mc_running = self.auto_snap.mc_running || self.shared.is_game_running();
-        match crate::effects::apply_to_instance(&instance, &spec.mc, &self.effects) {
+        self.fetch_missing_rp_set(&spec.mc);
+        let jar = crate::effects::client_jar(&self.cfg, &spec.mc);
+        match crate::effects::apply_to_instance(&instance, &spec.mc, &self.effects, jar.as_deref()) {
             Ok(rep) => {
-                let msg = match (rep.pack_written, rep.options_updated, mc_running) {
-                    (true, _, true) => {
-                        "Применено: options.txt + SadEffects.zip · Нажми F3+T в запущенной игре"
-                    }
-                    (true, _, false) => "Применено: options.txt + ресурспак SadEffects.zip",
-                    (false, true, true) => {
-                        "Применено к options.txt · Настройки перезагрузятся после перезапуска игры"
-                    }
-                    (false, true, false) => "Применено к options.txt (ресурспак не требуется)",
-                    (false, false, _) => "Настройки актуальны для активной сборки",
+                // Live: the running game reloads the pack right away (F3+T
+                // sent by the launcher) — no restart, no key press.
+                let reloaded = rep.pack_written && mc_running && crate::automation::reload_game_resources(self.shared.game_pid());
+                let msg = match (rep.pack_written, reloaded, mc_running, rep.options_updated) {
+                    (true, true, _, _) => "Применено в игре · ресурсы перезагружены",
+                    (true, false, true, _) => "Пак обновлён · окно игры не найдено — нажми F3+T в игре",
+                    (true, false, false, _) => "Применено · включится при запуске игры",
+                    (false, _, true, true) => "Гамма, тряска камеры и частицы — после перезапуска игры",
+                    (false, _, false, true) => "Применено к options.txt",
+                    (false, _, _, false) => "Всё уже применено",
                 };
                 self.effects_status = Some((true, msg.into()));
                 if notify {
@@ -2099,6 +2104,34 @@ impl Launcher {
                 }
             }
         }
+    }
+
+    /// Downloads switched-on set packs that are not cached yet; when they
+    /// arrive the effects are applied again (and the game reloads).
+    fn fetch_missing_rp_set(&mut self, mc: &str) {
+        if self.rp_fetch_rx.is_some() {
+            return;
+        }
+        let missing: Vec<String> = self
+            .effects
+            .rp_set
+            .iter()
+            .filter(|s| !crate::effects::rp_cached(s, mc).is_file())
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.rp_fetch_rx = Some(rx);
+        let (mc, ctx) = (mc.to_string(), self.ctx.clone());
+        net::spawn(async move {
+            let res = crate::effects::fetch_set_packs(&net::client(), &mc, &missing).await.map_err(|e| format!("{e:#}"));
+            let _ = tx.send(res);
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
+        });
     }
 
     pub fn start_effects_mod_install(&mut self, targets: Vec<crate::effects::EffectModSpec>) {
@@ -2651,6 +2684,20 @@ impl Launcher {
                 } else {
                     self.toast(format!("Java не установилась: {}", task.error.unwrap_or_default()));
                 }
+            }
+        }
+
+        if let Some(rx) = self.rp_fetch_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(res) => {
+                    self.rp_fetch_rx = None;
+                    match res {
+                        Ok(_) => self.apply_effects_now(false),
+                        Err(e) => self.effects_status = Some((false, format!("Ресурспаки не скачались: {e}"))),
+                    }
+                }
+                Err(TryRecvError::Empty) => busy = true,
+                Err(TryRecvError::Disconnected) => self.rp_fetch_rx = None,
             }
         }
 
