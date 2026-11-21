@@ -7,6 +7,9 @@ name: Сайт
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
 
 permissions:
   contents: read
@@ -26,8 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      - name: Адреса под GitHub Pages (canonical, sitemap, ссылки)
+        run: |
+          cp -r site _site
+          touch _site/.nojekyll
+          U="https://simsislam89-crypto.github.io/sad-launcher"
+          for f in index.html app.js robots.txt sitemap.xml humans.txt .well-known/security.txt; do
+            sed -i "s#https://rkt5jy.bot-keep.xyz#$U#g" "_site/$f"
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4
