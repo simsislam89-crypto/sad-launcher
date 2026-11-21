@@ -249,7 +249,7 @@ impl InstallerApp {
             warn_frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("⚠️ Лаунчер сейчас запущен. Закройте его, чтобы обновить.")
+                        RichText::new("Лаунчер сейчас запущен. Закройте его, чтобы обновить.")
                             .font(egui::FontId::proportional(12.0))
                             .color(Color32::from_rgb(250, 190, 80)),
                     );
@@ -363,11 +363,20 @@ impl InstallerApp {
     fn view_done(&mut self, ui: &mut Ui) {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("✓")
-                    .font(egui::FontId::proportional(28.0))
-                    .color(Color32::from_rgb(80, 220, 120)),
-            );
+            // Drawn check mark in a ring: the fonts have no «✓» glyph (it
+            // showed as an empty box).
+            let (r, _) = ui.allocate_exact_size(egui::Vec2::splat(34.0), egui::Sense::hover());
+            let green = Color32::from_rgb(80, 220, 120);
+            let c = r.center();
+            ui.painter().circle_stroke(c, 15.0, egui::Stroke::new(1.6, green));
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    egui::pos2(c.x - 6.5, c.y + 0.5),
+                    egui::pos2(c.x - 2.0, c.y + 5.0),
+                    egui::pos2(c.x + 7.0, c.y - 5.0),
+                ],
+                egui::Stroke::new(2.2, green),
+            ));
             ui.add_space(10.0);
             ui.vertical(|ui| {
                 ui.label(

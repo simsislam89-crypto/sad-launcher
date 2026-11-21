@@ -1006,7 +1006,9 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
     }
 
     egui::ScrollArea::vertical()
-        .id_salt("mod-detail-body")
+        // Per project: a newly opened card starts at the top, not where
+        // another card (or the last session) was scrolled to.
+        .id_salt(("mod-detail-body", &hit.source, &hit.id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -1032,47 +1034,7 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                         .map(|v| Media::Video(v.clone()))
                         .chain(d.gallery.iter().map(|g| Media::Image(g.clone())))
                         .collect();
-                    let mut open_at: Option<usize> = draw_videos(app, ui, skin, &ctx, &hit, &d.videos);
-                    if !d.gallery.is_empty() {
-                        egui::ScrollArea::horizontal()
-                            .id_salt("mod-gallery")
-                            .max_height(150.0)
-                            .show(ui, |ui| {
-                                wheel_scrolls_sideways(ui);
-                                ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 10.0;
-                                    for (gi, url) in d.gallery.iter().enumerate() {
-                                        let (r, resp) = ui.allocate_exact_size(Vec2::new(240.0, 135.0), Sense::click());
-                                        let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
-                                        ui.painter().rect_filled(r, CornerRadius::same(10), skin.fill());
-                                        if ui.is_rect_visible(r) {
-                                            if let Some(tex) = app.remote_image(&ctx, url, 480) {
-                                                let fade = ui.ctx().animate_bool_with_time(resp.id.with("f"), true, 0.3);
-                                                ui.painter().image(
-                                                    tex.id(),
-                                                    r,
-                                                    cover_uv(tex.size_vec2(), r.size()),
-                                                    egui::Color32::WHITE.gamma_multiply(fade * (0.85 + 0.15 * hover)),
-                                                );
-                                            }
-                                        }
-                                        ui.painter().rect_stroke(
-                                            r,
-                                            CornerRadius::same(10),
-                                            Stroke::new(1.0, theme::lerp_color(skin.line_soft(), skin.fill_strong(), hover)),
-                                            egui::StrokeKind::Inside,
-                                        );
-                                        if resp.hovered() {
-                                            ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
-                                        }
-                                        if resp.on_hover_text("Открыть крупно").clicked() {
-                                            open_at = Some(d.videos.len() + gi);
-                                        }
-                                    }
-                                });
-                            });
-                        ui.add_space(12.0);
-                    }
+                    let open_at = draw_media_strip(app, ui, skin, &ctx, &hit, &d.videos, &d.gallery);
                     if let Some(i) = open_at {
                         app.open_viewer(media, i, &hit.title);
                     }
@@ -1142,60 +1104,92 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
     }
 }
 
-/// «Видео»: YouTube previews from the description — how the game looks
-/// with this pack. A click opens the video in the browser (egui has no
-/// video player, and a built-in one would cost tens of МБ). Without
-/// videos in the description — one button to search YouTube.
-fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context, hit: &ModHit, videos: &[String]) -> Option<usize> {
+/// Tile of the media strip.
+const TILE: Vec2 = Vec2::new(224.0, 126.0);
+const TILE_GAP: f32 = 10.0;
+
+/// One row with everything that shows the game: YouTube videos from the
+/// description first (preview + glass ▶), then the screenshots — never
+/// split into two rows. A click opens the Telegram-style viewer. Without
+/// videos — «Найти видео на YouTube» next to the section title.
+///
+/// The mouse wheel moves the row sideways only while the pointer is ON the
+/// row and the row really is wider than the card; everywhere else the
+/// wheel scrolls the page down as usual.
+fn draw_media_strip(
+    app: &mut Launcher,
+    ui: &mut Ui,
+    skin: &Skin,
+    ctx: &egui::Context,
+    hit: &ModHit,
+    videos: &[String],
+    gallery: &[String],
+) -> Option<usize> {
     let mut open_at = None;
-    widgets::section_label(ui, skin, "ВИДЕО");
-    ui.add_space(6.0);
-    if videos.is_empty() {
-        ui.horizontal(|ui| {
+    let title = match (videos.is_empty(), gallery.is_empty()) {
+        (false, false) => "ВИДЕО И СКРИНШОТЫ",
+        (false, true) => "ВИДЕО",
+        _ => "СКРИНШОТЫ",
+    };
+    ui.horizontal(|ui| {
+        widgets::section_label(ui, skin, title);
+        if videos.is_empty() {
+            ui.add_space(8.0);
             let what = if hit.kind == mods::KIND_MODPACK { "modpack" } else { "mod" };
-            if widgets::button_icon(ui, skin, Icon::Search, "Найти видео на YouTube", Btn::Outline, true, 28.0, 11.5, 12.0)
-                .on_hover_text("В описании проекта нет видео — откроется поиск YouTube")
+            if widgets::button_icon(ui, skin, Icon::Search, "Найти видео на YouTube", Btn::Ghost, true, 24.0, 11.0, 10.0)
+                .on_hover_text("В описании нет видео — откроется поиск YouTube")
                 .clicked()
             {
                 let query = format!("{} minecraft {what}", hit.title);
                 let _ = open::that_detached(format!("https://www.youtube.com/results?search_query={}", enc_query(&query)));
             }
-            ui.label(RichText::new("автор не добавил видео в описание").font(theme::mono(9.0)).color(skin.faint()));
-        });
-        ui.add_space(12.0);
+        }
+    });
+    let count = videos.len() + gallery.len();
+    if count == 0 {
+        ui.add_space(8.0);
         return None;
     }
-    egui::ScrollArea::horizontal().id_salt("mod-videos").max_height(170.0).show(ui, |ui| {
-        wheel_scrolls_sideways(ui);
+    ui.add_space(6.0);
+
+    // The row's own rect (visible part), known before drawing it.
+    let height = TILE.y + 12.0;
+    let row = Rect::from_min_size(ui.cursor().min, Vec2::new(ui.available_width(), height));
+    let content_w = count as f32 * (TILE.x + TILE_GAP) - TILE_GAP;
+    if content_w > row.width() + 1.0 {
+        wheel_sideways_over(ui, row);
+    }
+
+    egui::ScrollArea::horizontal().id_salt("mod-media").max_height(height).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 10.0;
-            for (vi, id) in videos.iter().enumerate() {
-                let (r, resp) = ui.allocate_exact_size(Vec2::new(240.0, 135.0), Sense::click());
+            ui.spacing_mut().item_spacing.x = TILE_GAP;
+            for (i, item) in videos.iter().map(|v| (true, v)).chain(gallery.iter().map(|g| (false, g))).enumerate() {
+                let (is_video, value) = item;
+                let (r, resp) = ui.allocate_exact_size(TILE, Sense::click());
                 let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
-                let p = ui.painter();
+                let p = ui.painter().clone();
                 p.rect_filled(r, CornerRadius::same(10), skin.fill());
                 if ui.is_rect_visible(r) {
-                    let thumb = format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg");
-                    if let Some(tex) = app.remote_image(ctx, &thumb, 480) {
-                        p.image(
-                            tex.id(),
-                            r,
-                            cover_uv(tex.size_vec2(), r.size()),
-                            egui::Color32::WHITE.gamma_multiply(0.75 + 0.25 * hover),
-                        );
+                    let url = if is_video { format!("https://i.ytimg.com/vi/{value}/hqdefault.jpg") } else { value.clone() };
+                    if let Some(tex) = app.remote_image(ctx, &url, 480) {
+                        let fade = ui.ctx().animate_bool_with_time(resp.id.with("f"), true, 0.3);
+                        let dim = if is_video { 0.75 + 0.25 * hover } else { 0.85 + 0.15 * hover };
+                        p.image(tex.id(), r, cover_uv(tex.size_vec2(), r.size()), egui::Color32::WHITE.gamma_multiply(fade * dim));
                     }
                 }
-                // Glass play button: ring + triangle, no solid fill.
-                let c = r.center();
-                let radius = 20.0 + 2.0 * hover;
-                p.circle_filled(c, radius, egui::Color32::from_black_alpha(150));
-                p.circle_stroke(c, radius, Stroke::new(1.5, skin.ink().gamma_multiply(0.9)));
-                let s = 7.0 + hover;
-                p.add(egui::Shape::convex_polygon(
-                    vec![Pos2::new(c.x - s * 0.7, c.y - s), Pos2::new(c.x - s * 0.7, c.y + s), Pos2::new(c.x + s, c.y)],
-                    skin.ink(),
-                    Stroke::NONE,
-                ));
+                if is_video {
+                    // Glass play button: ring + triangle, no solid fill.
+                    let c = r.center();
+                    let radius = 19.0 + 2.0 * hover;
+                    p.circle_filled(c, radius, egui::Color32::from_black_alpha(150));
+                    p.circle_stroke(c, radius, Stroke::new(1.5, skin.ink().gamma_multiply(0.9)));
+                    let t = 7.0 + hover;
+                    p.add(egui::Shape::convex_polygon(
+                        vec![Pos2::new(c.x - t * 0.7, c.y - t), Pos2::new(c.x - t * 0.7, c.y + t), Pos2::new(c.x + t, c.y)],
+                        skin.ink(),
+                        Stroke::NONE,
+                    ));
+                }
                 p.rect_stroke(
                     r,
                     CornerRadius::same(10),
@@ -1203,16 +1197,32 @@ fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context
                     egui::StrokeKind::Inside,
                 );
                 if resp.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    ui.ctx().set_cursor_icon(if is_video { egui::CursorIcon::PointingHand } else { egui::CursorIcon::ZoomIn });
                 }
-                if resp.on_hover_text("Смотреть").clicked() {
-                    open_at = Some(vi);
+                if resp.on_hover_text(if is_video { "Смотреть" } else { "Открыть крупно" }).clicked() {
+                    open_at = Some(i);
                 }
             }
         });
     });
-    ui.add_space(12.0);
+    ui.add_space(10.0);
     open_at
+}
+
+/// While the pointer is over `row`, the vertical wheel delta becomes
+/// horizontal: the row scrolls sideways and the page does not move.
+fn wheel_sideways_over(ui: &mut Ui, row: Rect) {
+    let over = ui.input(|i| i.pointer.hover_pos()).map(|p| row.contains(p)).unwrap_or(false);
+    if !over || !ui.rect_contains_pointer(row) {
+        return;
+    }
+    ui.input_mut(|i| {
+        let dy = i.smooth_scroll_delta.y;
+        if dy != 0.0 {
+            i.smooth_scroll_delta.x += dy;
+            i.smooth_scroll_delta.y = 0.0;
+        }
+    });
 }
 
 /// Most of the description is Cyrillic already — no translate button.
@@ -1272,23 +1282,6 @@ fn draw_translate_bar(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::
     });
     ui.add_space(10.0);
     text
-}
-
-/// Inside a horizontal strip (videos, screenshots) the mouse wheel moves
-/// the strip sideways instead of scrolling the whole page down: the
-/// vertical wheel delta becomes horizontal while the pointer is over it.
-fn wheel_scrolls_sideways(ui: &mut Ui) {
-    let viewport = ui.clip_rect();
-    if !ui.rect_contains_pointer(viewport) {
-        return;
-    }
-    ui.input_mut(|i| {
-        let dy = i.smooth_scroll_delta.y;
-        if dy != 0.0 {
-            i.smooth_scroll_delta.x += dy;
-            i.smooth_scroll_delta.y = 0.0;
-        }
-    });
 }
 
 /// Percent-encodes a search query for a URL.
