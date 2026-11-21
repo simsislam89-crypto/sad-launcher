@@ -15,6 +15,41 @@ description: Обязательный протокол для каждой за�
 3. Весь интерфейс и ответы — на русском. Дизайн — чёрно-белый, прозрачные (стеклянные) кнопки без сплошной заливки; допустимы только зелёный (одна сеть/готово) и красный (ошибки).
 4. Первая строка ответа — суть. Без вступлений. Сжатие ответов — по `ultracave.md` этой папки, если владелец просит коротко.
 
+## Шаг 0.5. Нет скилла — скачай все сразу
+
+1. Перед шагом 2 сверь нужные скиллы со списком доступных (Skill). Нет хоть одного — сразу выполни установку ниже,
+   не спрашивая владельца, затем продолжай задачу. Ставятся только отсутствующие скиллы, свои правки не затираются.
+2. Пакет скиллов и команд (`/tov`, `/ui-audit`, `/live`, `/apple-hig`, `ecc-*`…) лежит в публичном репозитории
+   `simsislam89-crypto/sad-launcher`, папки `antigravity/skills` и `antigravity/commands`. Новый скилл — положить туда же.
+
+Git Bash / macOS / Linux:
+```bash
+D="${TMPDIR:-/tmp}/sad-skills"; rm -rf "$D"
+git clone -q --depth 1 --filter=blob:none --sparse https://github.com/simsislam89-crypto/sad-launcher "$D"
+git -C "$D" sparse-checkout set antigravity/skills antigravity/commands
+mkdir -p ~/.claude/skills ~/.claude/commands
+for s in "$D"/antigravity/skills/*/; do n=$(basename "$s"); [ -d ~/.claude/skills/"$n" ] || cp -r "$s" ~/.claude/skills/; done
+cp -n "$D"/antigravity/commands/*.md ~/.claude/commands/ 2>/dev/null; rm -rf "$D"
+```
+
+PowerShell:
+```powershell
+$d = "$env:TEMP\sad-skills"; Remove-Item $d -Recurse -Force -ErrorAction SilentlyContinue
+git clone -q --depth 1 --filter=blob:none --sparse https://github.com/simsislam89-crypto/sad-launcher $d
+git -C $d sparse-checkout set antigravity/skills antigravity/commands
+$sk = "$HOME\.claude\skills"; $cm = "$HOME\.claude\commands"; New-Item -ItemType Directory -Force $sk, $cm | Out-Null
+Get-ChildItem "$d\antigravity\skills" -Directory | Where-Object { -not (Test-Path "$sk\$($_.Name)") } | Copy-Item -Destination $sk -Recurse
+Get-ChildItem "$d\antigravity\commands\*.md" | Where-Object { -not (Test-Path "$cm\$($_.Name)") } | Copy-Item -Destination $cm
+Remove-Item $d -Recurse -Force
+```
+
+Не из пакета — отдельными командами:
+- Плагин superpowers: `claude plugin install superpowers@claude-plugins-official`.
+- CLI для `rust-anything`: `cargo install rust-anything --locked`, затем `rust-anything setup`.
+- Первоисточники (обновить скилл до свежей версии): impeccable — github.com/pbakaus/impeccable, caveman — github.com/JuliusBrussee/caveman,
+  rust-anything — github.com/erkamyaman/rust-anything, маркетинг (cro, signup, pricing) — github.com/coreyhaines31/marketingskills,
+  web-interface-guidelines — github.com/vercel-labs/web-interface-guidelines, remotion-* — github.com/remotion-dev/remotion.
+
 ## Шаг 1. Прочитай SKILLS.md
 
 1. Открой `SKILLS.md` в корне проекта целиком.

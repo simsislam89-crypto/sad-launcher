@@ -85,6 +85,61 @@ pub fn file_stamp() -> String {
     format!("{:04}{:02}{:02}-{:02}{:02}{:02}", y, mo, d, h, m, s)
 }
 
+/// Seconds since 1970 now (UTC).
+pub fn now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// `2026-11-17T23:14:40.617931Z` / `…+00:00` → Unix seconds (UTC; the
+/// offset is applied). Date-only strings count as midnight.
+pub fn parse_iso_unix(iso: &str) -> Option<i64> {
+    let iso = iso.trim();
+    let num = |s: &str| s.parse::<i64>().ok();
+    let (y, mo, d) = (num(iso.get(0..4)?)?, num(iso.get(5..7)?)?, num(iso.get(8..10)?)?);
+    if iso.get(4..5)? != "-" || !(1..=12).contains(&mo) || !(1..=31).contains(&d) {
+        return None;
+    }
+    let (mut h, mut mi, mut s, mut offset) = (0, 0, 0, 0i64);
+    if let Some(time) = iso.get(11..) {
+        h = time.get(0..2).and_then(num).unwrap_or(0);
+        mi = time.get(3..5).and_then(num).unwrap_or(0);
+        s = time.get(6..8).and_then(num).unwrap_or(0);
+        // «+03:00» / «-05:00» after the seconds (and fraction).
+        if let Some(pos) = time.get(8..).and_then(|t| t.find(['+', '-'])) {
+            let tz = &time[8 + pos..];
+            let sign = if tz.starts_with('-') { -1 } else { 1 };
+            let oh = tz.get(1..3).and_then(num).unwrap_or(0);
+            let om = tz.get(4..6).and_then(num).unwrap_or(0);
+            offset = sign * (oh * 3600 + om * 60);
+        }
+    }
+    // Days from civil date (Howard Hinnant's algorithm).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let mp = (mo + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + h * 3600 + mi * 60 + s - offset)
+}
+
+/// «17 нояб. 2026» from an ISO 8601 date; empty if unreadable.
+pub fn ru_date(iso: &str) -> String {
+    const MONTHS: [&str; 12] = [
+        "янв.", "февр.", "марта", "апр.", "мая", "июня", "июля", "авг.", "сент.", "окт.", "нояб.", "дек.",
+    ];
+    if parse_iso_unix(iso).is_none() {
+        return String::new();
+    }
+    let num = |a: usize, b: usize| iso.get(a..b).and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+    let (y, m, d) = (num(0, 4), num(5, 7), num(8, 10));
+    format!("{d} {} {y}", MONTHS[m.clamp(1, 12) - 1])
+}
+
 pub fn human_bytes(n: u64) -> String {
     const UNITS: [&str; 4] = ["Б", "КБ", "МБ", "ГБ"];
     let mut v = n as f64;

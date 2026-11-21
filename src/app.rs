@@ -224,6 +224,39 @@ impl InstallTask {
     }
 }
 
+/// Text without the characters the loaded fonts cannot draw (colour
+/// emoji, private-use icons, joiners) — egui shows those as empty boxes.
+/// Lines that started with such a «bullet» lose the leftover space too.
+pub fn drawable_text(ctx: &egui::Context, text: &str) -> String {
+    let font = crate::theme::body(13.0);
+    let mut out = String::with_capacity(text.len());
+    ctx.fonts_mut(|f| {
+        for line in text.split('\n') {
+            let kept: String = line
+                .chars()
+                .filter(|&c| {
+                    c == ' '
+                        || c == '\t'
+                        || (!matches!(c, '\u{200d}' | '\u{fe0f}' | '\u{fe0e}') && f.has_glyph(&font, c))
+                })
+                .collect();
+            out.push_str(kept.trim_start());
+            out.push('\n');
+        }
+    });
+    out.pop();
+    out
+}
+
+/// Whether an installed pack build is the newest version of the pack.
+#[derive(Clone)]
+pub enum PackCheck {
+    Checking,
+    Current,
+    Update(crate::mods::PackFile),
+    Failed,
+}
+
 pub struct ModTask {
     pub title: String,
     pub kind: String,
@@ -236,12 +269,17 @@ pub struct ModTask {
     pub cancel: Arc<AtomicBool>,
     pub last_file: String,
     pub pack_meta: Option<(String, Spec)>,
+    /// Bytes of the current phase (pack files): the bar follows them, the
+    /// «5/120» counter follows files. (0, 0) — no byte sizes known.
+    pub bytes: (u64, u64),
     pub rx: Receiver<ModEvent>,
 }
 
 impl ModTask {
     pub fn frac(&self) -> f32 {
-        if self.total > 0 {
+        if self.bytes.1 > 0 {
+            (self.bytes.0 as f32 / self.bytes.1 as f32).clamp(0.0, 1.0)
+        } else if self.total > 0 {
             (self.done as f32 / self.total as f32).clamp(0.0, 1.0)
         } else {
             0.0
@@ -252,9 +290,14 @@ impl ModTask {
         loop {
             match self.rx.try_recv() {
                 Ok(ModEvent::Progress { done, total }) => {
+                    if done == 0 {
+                        // A new phase starts: its own counter, no stale bytes.
+                        self.bytes = (0, 0);
+                    }
                     self.done = done;
                     self.total = total;
                 }
+                Ok(ModEvent::Bytes { done, total }) => self.bytes = (done, total),
                 Ok(ModEvent::File(name)) => self.last_file = name,
                 Ok(ModEvent::PackMeta { profile_id, spec }) => {
                     self.pack_meta = Some((profile_id, spec));
@@ -576,7 +619,9 @@ impl SearchState {
     }
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(600);
+/// Search pages are reused this long — download counts and «обновлено»
+/// stay close to live (a card refreshes its own tile at once).
+const CACHE_TTL: Duration = Duration::from_secs(180);
 
 pub struct Launcher {
     pub cfg: Config,
@@ -647,6 +692,9 @@ pub struct Launcher {
     pub detail_at: Instant,
     pub detail_body: Option<Result<crate::mods::ProjectDetail, String>>,
     pub detail_rx: Option<Receiver<Result<crate::mods::ProjectDetail, String>>>,
+    /// Newest version of each installed pack build, asked live from its
+    /// source (profile id → state); filled in the background.
+    pub pack_checks: Arc<std::sync::Mutex<HashMap<String, PackCheck>>>,
     pub public_ip_cached: Option<String>,
     pub public_ip_fetching: bool,
     pub friend_code: String,
@@ -1096,6 +1144,7 @@ impl Launcher {
                     file_name: None,
                     tags: String::new(),
                     categories: Vec::new(),
+                    updated: String::new(),
                 };
                 // The build installs into the ACTIVE build's Minecraft/loader.
                 let mut noop = |_ev: ModEvent| {};
@@ -1214,6 +1263,7 @@ impl Launcher {
             detail_at: Instant::now(),
             detail_body: None,
             detail_rx: None,
+            pack_checks: Arc::new(std::sync::Mutex::new(HashMap::new())),
             public_ip_cached: None,
             public_ip_fetching: false,
             friend_code: String::new(),
@@ -1717,6 +1767,68 @@ impl Launcher {
         }
     }
 
+    /// State of the «is this pack build current?» check; starts it once.
+    pub fn pack_check(&mut self, profile: &crate::profiles::Profile) -> Option<PackCheck> {
+        crate::mods::profile_hit(profile)?;
+        let mut checks = self.pack_checks.lock().ok()?;
+        if let Some(state) = checks.get(&profile.id) {
+            return Some(state.clone());
+        }
+        checks.insert(profile.id.clone(), PackCheck::Checking);
+        drop(checks);
+        let (cfg, profile, store, ctx) = (self.cfg.clone(), profile.clone(), self.pack_checks.clone(), self.ctx.clone());
+        net::spawn(async move {
+            let state = match crate::mods::pack_update(&net::client(), &cfg, &profile).await {
+                Ok(Some(newer)) => PackCheck::Update(newer),
+                Ok(None) => PackCheck::Current,
+                Err(_) => PackCheck::Failed,
+            };
+            if let Ok(mut checks) = store.lock() {
+                checks.insert(profile.id.clone(), state);
+            }
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
+        });
+        Some(PackCheck::Checking)
+    }
+
+    /// Reinstalls a pack build from the newest version of its pack: same
+    /// build, worlds/screenshots/options kept (see `upsert_modpack_profile`).
+    pub fn update_pack_build(&mut self, ctx: &egui::Context, profile: &crate::profiles::Profile) {
+        let Some(hit) = crate::mods::profile_hit(profile) else {
+            return;
+        };
+        if let Ok(mut checks) = self.pack_checks.lock() {
+            checks.remove(&profile.id);
+        }
+        self.start_mod_install(ctx, hit);
+    }
+
+    /// The card answers straight from Modrinth/CurseForge: its download
+    /// count and last update replace the (up to minutes old) search-index
+    /// values in the grid and the page cache, so the tile matches the card.
+    fn apply_fresh_detail(&mut self, d: &crate::mods::ProjectDetail) {
+        let Some(open) = self.detail.as_mut() else {
+            return;
+        };
+        if d.downloads > 0 {
+            open.downloads = d.downloads;
+        }
+        if !d.updated.is_empty() {
+            open.updated = d.updated.clone();
+        }
+        let (source, id) = (open.source.clone(), open.id.clone());
+        let (downloads, updated) = (open.downloads, open.updated.clone());
+        let lists = std::iter::once(&mut self.search.results).chain(self.search.cache.values_mut().map(|(_, v)| v));
+        for list in lists {
+            for h in list.iter_mut().filter(|h| h.source == source && h.id == id) {
+                h.downloads = downloads;
+                h.updated = updated.clone();
+            }
+        }
+    }
+
     /// Opens the project card and loads its details. Opening another card
     /// replaces the channel, so a slow older answer can never show up here.
     pub fn open_detail(&mut self, hit: ModHit) {
@@ -1908,6 +2020,7 @@ impl Launcher {
             cancel,
             last_file: String::new(),
             pack_meta: None,
+            bytes: (0, 0),
             rx,
         });
     }
@@ -2038,6 +2151,7 @@ impl Launcher {
             cancel,
             last_file: String::new(),
             pack_meta: None,
+            bytes: (0, 0),
             rx,
         });
     }
@@ -2075,6 +2189,7 @@ impl Launcher {
             cancel,
             last_file: String::new(),
             pack_meta: None,
+            bytes: (0, 0),
             rx,
         });
     }
@@ -2254,6 +2369,18 @@ impl Launcher {
         self.poll_remove(ctx);
 
         self.drain_search(ctx);
+        // Dev screenshots: `MADRID_DEV_DETAIL=1` opens the first result's card.
+        {
+            static OPENED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if self.detail.is_none()
+                && !self.search.results.is_empty()
+                && std::env::var_os("MADRID_DEV_DETAIL").is_some()
+                && !OPENED.swap(true, Ordering::Relaxed)
+            {
+                let hit = self.search.results[0].clone();
+                self.open_detail(hit);
+            }
+        }
         if self.search.busy {
             busy = true;
         }
@@ -2303,6 +2430,10 @@ impl Launcher {
                     }
                 } else if let Some(path) = task.path {
                     if task.kind == mods::KIND_MODPACK {
+                        // The build now holds a new version: ask again.
+                        if let Ok(mut checks) = self.pack_checks.lock() {
+                            checks.clear();
+                        }
                         self.toast(format!("Модпак «{}» готов — жми «Играть»", task.title));
                     } else {
                         self.toast(format!(
@@ -2345,7 +2476,13 @@ impl Launcher {
 
         if let Some(rx) = self.detail_rx.as_ref() {
             match rx.try_recv() {
-                Ok(res) => {
+                Ok(mut res) => {
+                    if let Ok(d) = &mut res {
+                        self.apply_fresh_detail(d);
+                        // Emoji and symbols the fonts lack drew as «□».
+                        d.body = drawable_text(ctx, &d.body);
+                        d.summary = drawable_text(ctx, &d.summary);
+                    }
                     self.detail_body = Some(res);
                     self.detail_rx = None;
                 }

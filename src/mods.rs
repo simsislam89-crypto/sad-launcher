@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 /// CurseForge host: the official API needs a key; the public mirror
@@ -108,7 +108,7 @@ pub struct InstalledMod {
     pub enabled: bool,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ModHit {
     pub source: String,
     pub id: String,
@@ -128,6 +128,9 @@ pub struct ModHit {
     /// Localised categories («RPG и приключения», «Магия»), at most three.
     #[serde(default)]
     pub categories: Vec<String>,
+    /// Last update of the project (ISO 8601), for «обновлено 3 дн. назад».
+    #[serde(default)]
+    pub updated: String,
 }
 
 /// One item of the user's own build (the плюсик list).
@@ -162,6 +165,8 @@ pub fn save_build(entries: &[BuildEntry]) {
 #[derive(Clone)]
 pub enum ModEvent {
     Progress { done: u64, total: u64 },
+    /// Bytes of the files being fetched (the bar; `Progress` counts files).
+    Bytes { done: u64, total: u64 },
     /// A concrete file started/completed — shown live in the UI.
     File(String),
     /// The pack's own build was created: switch to it, fetch its client.
@@ -437,6 +442,11 @@ async fn curse_search(
         latest_files_indexes: Vec<FileIndex>,
         #[serde(default)]
         categories: Vec<Cat>,
+        /// Newest file release — what «обновлено» means for players.
+        #[serde(default)]
+        date_released: String,
+        #[serde(default)]
+        date_modified: String,
     }
     #[derive(Deserialize)]
     struct Cat {
@@ -519,6 +529,7 @@ async fn curse_search(
                 file_name: None,
                 tags,
                 categories: crate::categories::labels("curseforge", kind, m.categories.iter().map(|c| c.id.to_string())),
+                updated: if m.date_released.is_empty() { m.date_modified } else { m.date_released },
             }
         })
         .collect())
@@ -582,6 +593,8 @@ async fn modrinth_search(
         versions: Vec<String>,
         #[serde(default)]
         categories: Vec<String>,
+        #[serde(default)]
+        date_modified: String,
     }
 
     let sort_q = match sort {
@@ -660,6 +673,7 @@ async fn modrinth_search(
                 file_name: None,
                 tags,
                 categories: crate::categories::labels("modrinth", kind, h.categories.iter().cloned()),
+                updated: h.date_modified,
             }
         })
         .collect())
@@ -993,7 +1007,8 @@ async fn install_modpack<F: FnMut(ModEvent) + Send>(
 ) -> Result<PathBuf> {
     on(ModEvent::Progress { done: 0, total: 0 });
     on(ModEvent::File("архив пака".into()));
-    let (url, filename) = pack_archive(client, cfg, hit).await?;
+    let pack = latest_pack_file(client, cfg, hit).await?;
+    let (url, filename) = (pack.url.clone(), pack.filename.clone());
     let work = crate::config::data_dir().join("meta").join("packs");
     std::fs::create_dir_all(&work)?;
     let tag = sanitize(&format!("{}-{}", hit.source, hit.id));
@@ -1024,7 +1039,7 @@ async fn install_modpack<F: FnMut(ModEvent) + Send>(
             .await??
         };
         let source = format!("{}:{}", hit.source, hit.id);
-        let profile = crate::profiles::upsert_modpack_profile(cfg, &hit.title, &source, &plan.spec)?;
+        let profile = crate::profiles::upsert_modpack_profile(cfg, &hit.title, &source, &plan.spec, &pack.stamp())?;
         on(ModEvent::PackMeta {
             profile_id: profile.id.clone(),
             spec: plan.spec.clone(),
@@ -1096,12 +1111,149 @@ async fn install_modpack<F: FnMut(ModEvent) + Send>(
 
 /// The pack archive: newest version of the pack, whatever Minecraft it targets.
 pub async fn pack_archive(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> Result<(String, String)> {
-    if hit.source == "curseforge" {
-        let any = Spec::new("", Loader::Vanilla, "");
-        return curse_file(client, cfg, hit, &any, KIND_MODPACK).await;
+    let p = latest_pack_file(client, cfg, hit).await?;
+    Ok((p.url, p.filename))
+}
+
+/// The newest version of a pack at its source, asked live every time (no
+/// cache): what gets installed and what an installed build compares with.
+#[derive(Clone, Debug, Default)]
+pub struct PackFile {
+    pub url: String,
+    pub filename: String,
+    /// Modrinth version id / CurseForge file id.
+    pub id: String,
+    /// «1.8.0», «All the Mods 10-8.6».
+    pub name: String,
+    /// Publication date (ISO 8601).
+    pub date: String,
+}
+
+impl PackFile {
+    pub fn stamp(&self) -> crate::profiles::PackStamp {
+        crate::profiles::PackStamp { file: self.id.clone(), version: self.name.clone(), date: self.date.clone() }
     }
-    let any = Spec::new("", Loader::Vanilla, "");
-    modrinth_file(client, hit, &any, KIND_MODPACK).await
+}
+
+pub async fn latest_pack_file(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> Result<PackFile> {
+    if hit.source == "curseforge" {
+        #[derive(Deserialize)]
+        struct Resp {
+            data: Vec<File>,
+        }
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct File {
+            id: u64,
+            #[serde(default)]
+            display_name: String,
+            #[serde(default)]
+            file_name: String,
+            #[serde(default)]
+            file_date: String,
+            #[serde(default)]
+            download_url: Option<String>,
+        }
+        let url = format!("{}/mods/{}/files?pageSize=1", cf_base(cfg), hit.id);
+        let newest = client
+            .get(url)
+            .header("x-api-key", cfg.cf_api_key.trim())
+            .send()
+            .await
+            .context("CurseForge не отвечает")?
+            .error_for_status()?
+            .json::<Resp>()
+            .await
+            .ok()
+            .and_then(|r| r.data.into_iter().next());
+        let Some(f) = newest else {
+            // The search result still knows the main file.
+            let (url, filename) = curse_file(client, cfg, hit, &Spec::new("", Loader::Vanilla, ""), KIND_MODPACK).await?;
+            let id = hit.file_id.map(|i| i.to_string()).unwrap_or_default();
+            return Ok(PackFile { url, filename: filename.clone(), id, name: filename, date: String::new() });
+        };
+        let filename = if f.file_name.is_empty() { format!("{}-{}.zip", hit.slug, f.id) } else { f.file_name };
+        return Ok(PackFile {
+            url: cf_file_url(&hit.id, f.id, f.download_url),
+            name: if f.display_name.is_empty() { filename.clone() } else { f.display_name },
+            filename,
+            id: f.id.to_string(),
+            date: f.file_date,
+        });
+    }
+    #[derive(Deserialize)]
+    struct Version {
+        id: String,
+        #[serde(default)]
+        version_number: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        date_published: String,
+        #[serde(default)]
+        files: Vec<VFile>,
+    }
+    #[derive(Deserialize)]
+    struct VFile {
+        url: String,
+        filename: String,
+        #[serde(default)]
+        primary: bool,
+    }
+    // The project id works where the slug does; packs installed from a
+    // build only remember the id.
+    let key = if hit.slug.is_empty() { &hit.id } else { &hit.slug };
+    let list: Vec<Version> = client
+        .get(format!("https://api.modrinth.com/v2/project/{}/version?include_changelog=false", enc(key)))
+        .send()
+        .await
+        .context("Modrinth не отвечает")?
+        .error_for_status()?
+        .json()
+        .await
+        .context("Список версий не читается")?;
+    // Newest by date, not by list position.
+    let v = list
+        .into_iter()
+        .filter(|v| !v.files.is_empty())
+        .max_by(|a, b| a.date_published.cmp(&b.date_published))
+        .ok_or_else(|| anyhow!("У «{}» нет файлов", hit.title))?;
+    let mut files = v.files;
+    let i = files.iter().position(|f| f.primary).unwrap_or(0);
+    let f = files.swap_remove(i);
+    let name = if v.version_number.is_empty() { v.name } else { v.version_number };
+    Ok(PackFile { url: f.url, filename: f.filename, id: v.id, name, date: v.date_published })
+}
+
+/// A newer pack version than the build holds, or None when it is current.
+/// Builds installed before versions were remembered (empty `pack_file`)
+/// get the newest version as an update too — reinstall stamps them.
+pub async fn pack_update(
+    client: &reqwest::Client,
+    cfg: &Config,
+    profile: &crate::profiles::Profile,
+) -> Result<Option<PackFile>> {
+    let Some(hit) = profile_hit(profile) else {
+        return Ok(None);
+    };
+    let newest = latest_pack_file(client, cfg, &hit).await?;
+    Ok((newest.id != profile.pack_file).then_some(newest))
+}
+
+/// The catalog entry a pack build came from (`modrinth:ID`, `curseforge:ID`).
+pub fn profile_hit(profile: &crate::profiles::Profile) -> Option<ModHit> {
+    let (source, id) = profile.source.split_once(':')?;
+    if id.is_empty() || !(source == "modrinth" || source == "curseforge") {
+        return None;
+    }
+    Some(ModHit {
+        source: source.to_string(),
+        id: id.to_string(),
+        slug: if source == "curseforge" { id.to_string() } else { String::new() },
+        title: profile.name.clone(),
+        kind: KIND_MODPACK.to_string(),
+        ..Default::default()
+    })
 }
 
 /// Downloads every pack file into the build, 32 at a time. Files that
@@ -1123,11 +1275,37 @@ async fn fetch_pack_files<F: FnMut(ModEvent) + Send>(
         Arc::new(tokio::task::spawn_blocking(move || LocalFiles::scan(&cfg, &root)).await.unwrap_or_default())
     };
     let curse_names = Arc::new(curse_file_names(client, cfg, &files).await);
+    // Biggest first: the 100+ МБ resource packs of a pack start while the
+    // small mods keep the other slots busy, instead of crawling alone at
+    // the end of the bar.
+    let mut files = files;
+    files.sort_by_cached_key(|f| std::cmp::Reverse(match f {
+        PackSource::Direct { size, .. } => *size,
+        PackSource::Curse { file, .. } => curse_names.get(file).map(|(_, s)| *s).unwrap_or(0),
+    }));
+    let bytes_total: u64 = files
+        .iter()
+        .map(|f| match f {
+            PackSource::Direct { size, .. } => *size,
+            PackSource::Curse { file, .. } => curse_names.get(file).map(|(_, s)| *s).unwrap_or(0),
+        })
+        .sum();
+    // Received bytes of every pack file, live: the bar moves while a
+    // 130 МБ resource pack downloads instead of jumping when it ends.
+    let live = Arc::new(AtomicU64::new(0));
+    let mut last_bytes = std::time::Instant::now();
+    let mut report_bytes = |on: &mut F, force: bool| {
+        if bytes_total > 0 && (force || last_bytes.elapsed() >= std::time::Duration::from_millis(200)) {
+            last_bytes = std::time::Instant::now();
+            on(ModEvent::Bytes { done: live.load(Ordering::Relaxed).min(bytes_total), total: bytes_total });
+        }
+    };
     let sem = Arc::new(tokio::sync::Semaphore::new(32));
     let mut set = tokio::task::JoinSet::new();
     let mut done = 0u64;
     let mut failed: Vec<String> = Vec::new();
     on(ModEvent::Progress { done: 0, total });
+    report_bytes(on, true);
     let handle = |res: std::result::Result<(String, bool), tokio::task::JoinError>,
                       done: &mut u64,
                       failed: &mut Vec<String>,
@@ -1149,18 +1327,28 @@ async fn fetch_pack_files<F: FnMut(ModEvent) + Send>(
         let client = client.clone();
         let root = root.to_path_buf();
         let cancel = cancel.clone();
-        let (local, curse_names) = (local.clone(), curse_names.clone());
+        let (local, curse_names, live) = (local.clone(), curse_names.clone(), live.clone());
         set.spawn(async move {
             let _permit = permit;
-            fetch_pack_file(&client, &root, &file, &cancel, &local, &curse_names).await
+            fetch_pack_file(&client, &root, &file, &cancel, &local, &curse_names, &live).await
         });
         while let Some(res) = set.try_join_next() {
             handle(res, &mut done, &mut failed, on);
         }
+        report_bytes(on, false);
     }
-    while let Some(res) = set.join_next().await {
-        handle(res, &mut done, &mut failed, on);
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(250));
+    loop {
+        tokio::select! {
+            res = set.join_next() => match res {
+                Some(res) => handle(res, &mut done, &mut failed, on),
+                None => break,
+            },
+            _ = ticker.tick() => {}
+        }
+        report_bytes(on, false);
     }
+    report_bytes(on, true);
     if cancel.load(Ordering::Relaxed) {
         bail!("Отменено");
     }
@@ -1175,21 +1363,46 @@ async fn fetch_pack_file(
     cancel: &Arc<AtomicBool>,
     local: &LocalFiles,
     curse_names: &HashMap<u64, (String, u64)>,
+    live: &AtomicU64,
 ) -> (String, bool) {
     match file {
         PackSource::Direct { urls, path, size, sha1 } => {
             let name = path.rsplit('/').next().unwrap_or(path).to_string();
             let dest = root.join(path);
-            if local.link(&name, *size, sha1, &dest) {
+            if std::fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false)
+                || local.link(&name, *size, sha1, &dest)
+            {
+                live.fetch_add(*size, Ordering::Relaxed);
                 return (name, true);
             }
             for url in urls {
-                if crate::minecraft::download_file(client, url, &dest, Some(cancel.as_ref()))
-                    .await
-                    .is_ok()
-                {
+                // Bytes count as they arrive; a retry starts from zero, so
+                // the counter follows `done` down as well as up.
+                let mut counted = 0u64;
+                let mut report = |done: u64, _total: u64| {
+                    if done >= counted {
+                        live.fetch_add(done - counted, Ordering::Relaxed);
+                    } else {
+                        live.fetch_sub(counted - done, Ordering::Relaxed);
+                    }
+                    counted = done;
+                };
+                let res = crate::minecraft::download_file_progress(
+                    client,
+                    url,
+                    &dest,
+                    Some(cancel.as_ref()),
+                    &mut report,
+                )
+                .await;
+                if res.is_ok() {
+                    // Exactly the file's size, whatever the server reported.
+                    let real = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(*size);
+                    live.fetch_add(real.saturating_sub(counted), Ordering::Relaxed);
+                    live.fetch_sub(counted.saturating_sub(real), Ordering::Relaxed);
                     return (name, true);
                 }
+                live.fetch_sub(counted, Ordering::Relaxed);
             }
             (name, false)
         }
@@ -1200,12 +1413,17 @@ async fn fetch_pack_file(
                 if std::fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false)
                     || local.link(name, *size, "", &dest)
                 {
+                    live.fetch_add(*size, Ordering::Relaxed);
                     return (name.clone(), true);
                 }
             }
             for attempt in 1..=3u64 {
                 match curse_public_file(client, root, *project, *file, cancel).await {
-                    Ok(name) => return (name, true),
+                    Ok(name) => {
+                        let size = curse_names.get(file).map(|(_, s)| *s).unwrap_or(0);
+                        live.fetch_add(size, Ordering::Relaxed);
+                        return (name, true);
+                    }
                     Err(e) if e.to_string().contains("Отменено") || attempt == 3 => break,
                     Err(_) => tokio::time::sleep(std::time::Duration::from_millis(500 * attempt)).await,
                 }
@@ -1573,6 +1791,8 @@ pub struct ProjectVersion {
     pub name: String,
     pub game_versions: Vec<String>,
     pub loaders: Vec<String>,
+    /// Publication date (ISO 8601); empty when the source omits it.
+    pub date: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -1590,6 +1810,10 @@ pub struct ProjectDetail {
     pub compatible: Option<bool>,
     /// Screenshot URLs for the gallery strip.
     pub gallery: Vec<String>,
+    /// Last update (ISO 8601): newest file/version.
+    pub updated: String,
+    /// YouTube video ids found in the description (embeds and links).
+    pub videos: Vec<String>,
 }
 
 fn fits_build(v: &ProjectVersion, spec: &Spec, kind: &str) -> bool {
@@ -1655,13 +1879,15 @@ async fn modrinth_detail(client: &reqwest::Client, hit: &ModHit) -> Result<Proje
         game_versions: Vec<String>,
         #[serde(default)]
         loaders: Vec<String>,
+        #[serde(default)]
+        date_published: String,
     }
     let slug = enc(&hit.slug);
     let proj_req = client
         .get(format!("https://api.modrinth.com/v2/project/{slug}"))
         .send();
     let vers_req = client
-        .get(format!("https://api.modrinth.com/v2/project/{slug}/version"))
+        .get(format!("https://api.modrinth.com/v2/project/{slug}/version?include_changelog=false"))
         .send();
     let (proj, vers) = tokio::join!(proj_req, vers_req);
     let proj: Proj = proj
@@ -1680,6 +1906,7 @@ async fn modrinth_detail(client: &reqwest::Client, hit: &ModHit) -> Result<Proje
                 name: v.name,
                 game_versions: v.game_versions,
                 loaders: v.loaders,
+                date: v.date_published,
             })
             .collect(),
         Err(_) => Vec::new(),
@@ -1687,7 +1914,11 @@ async fn modrinth_detail(client: &reqwest::Client, hit: &ModHit) -> Result<Proje
     let mut gallery = proj.gallery;
     gallery.sort_by_key(|s| !s.featured);
     let kind = if proj.project_type.is_empty() { "mod".to_string() } else { proj.project_type };
+    let updated = versions.iter().map(|v| v.date.as_str()).max().unwrap_or("").to_string();
+    let videos = youtube_ids(&proj.body);
     Ok(ProjectDetail {
+        updated,
+        videos,
         title: proj.title,
         summary: proj.description,
         body: clean_md(&proj.body),
@@ -1720,6 +1951,18 @@ async fn curse_detail(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> R
         latest_files_indexes: Vec<FileIndex>,
         #[serde(default)]
         links: Option<Links>,
+        #[serde(default)]
+        latest_files: Vec<LatestFile>,
+        #[serde(default)]
+        date_released: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LatestFile {
+        #[serde(default)]
+        file_name: String,
+        #[serde(default)]
+        file_date: String,
     }
     #[derive(Deserialize)]
     struct Logo {
@@ -1781,14 +2024,14 @@ async fn curse_detail(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> R
         .await
         .context("Проект не читается")?
         .data;
-    let body = match desc {
-        Ok(r) => r
-            .json::<DescResp>()
-            .await
-            .map(|d| clean_html(&d.data))
-            .unwrap_or_default(),
+    let raw_desc = match desc {
+        Ok(r) => r.json::<DescResp>().await.map(|d| d.data).unwrap_or_default(),
         Err(_) => String::new(),
     };
+    let body = clean_html(&raw_desc);
+    let videos = youtube_ids(&raw_desc);
+    let file_dates: HashMap<&str, &str> =
+        m.latest_files.iter().map(|f| (f.file_name.as_str(), f.file_date.as_str())).collect();
     let mut seen = std::collections::HashSet::new();
     let versions = m
         .latest_files_indexes
@@ -1801,14 +2044,25 @@ async fn curse_detail(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> R
                 "" => Vec::new(),
                 l => vec![l.to_lowercase()],
             },
+            date: file_dates.get(f.filename.as_str()).map(|d| d.to_string()).unwrap_or_default(),
         })
         .collect();
+    let updated = m
+        .latest_files
+        .iter()
+        .map(|f| f.file_date.as_str())
+        .max()
+        .filter(|d| !d.is_empty())
+        .unwrap_or(m.date_released.as_str())
+        .to_string();
     let page_url = m
         .links
         .map(|l| l.website_url)
         .filter(|u| !u.is_empty())
         .unwrap_or_else(|| format!("https://www.curseforge.com/projects/{}", hit.id));
     Ok(ProjectDetail {
+        updated,
+        videos,
         title: m.name,
         summary: m.summary,
         body,
@@ -1826,6 +2080,61 @@ async fn curse_detail(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> R
             .filter(|u| !u.is_empty())
             .collect(),
     })
+}
+
+/// YouTube video ids in a description (markdown or HTML): embeds
+/// (`/embed/ID`, nocookie), watch links (`?v=ID`), `youtu.be/ID`,
+/// shorts. Order kept, duplicates dropped, at most six.
+pub fn youtube_ids(text: &str) -> Vec<String> {
+    const MARKERS: [&str; 6] = [
+        "youtube.com/embed/",
+        "youtube-nocookie.com/embed/",
+        "youtube.com/watch?v=",
+        "youtube.com/shorts/",
+        "youtu.be/",
+        "youtube.com/v/",
+    ];
+    let mut found: Vec<(usize, String)> = Vec::new();
+    for marker in MARKERS {
+        let mut from = 0;
+        while let Some(at) = text[from..].find(marker) {
+            let start = from + at + marker.len();
+            let id: String = text[start..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+                .collect();
+            if id.len() == 11 {
+                found.push((from + at, id));
+            }
+            from = start;
+        }
+    }
+    // A video both linked and embedded is shown once, in text order.
+    found.sort_by_key(|(at, _)| *at);
+    let mut seen = std::collections::HashSet::new();
+    found
+        .into_iter()
+        .filter(|(_, id)| seen.insert(id.clone()))
+        .map(|(_, id)| id)
+        .take(6)
+        .collect()
+}
+
+/// «3 дн. назад», «2 мес. назад» from an ISO 8601 date; empty if unreadable.
+pub fn ago(iso: &str, now_unix: i64) -> String {
+    let Some(then) = crate::util::parse_iso_unix(iso) else {
+        return String::new();
+    };
+    let secs = (now_unix - then).max(0);
+    let (hour, day) = (3600, 86_400);
+    match secs {
+        s if s < hour => "только что".into(),
+        s if s < day => format!("{} ч. назад", s / hour),
+        s if s < 2 * day => "вчера".into(),
+        s if s < 31 * day => format!("{} дн. назад", s / day),
+        s if s < 365 * day => format!("{} мес. назад", s / (30 * day)),
+        s => format!("{} г. назад", s / (365 * day)),
+    }
 }
 
 /// HTML → readable plain text: block tags become line breaks, list items
@@ -1979,6 +2288,70 @@ fn enc(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn youtube_ids_from_markdown_and_html() {
+        let md = "Trailer: https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=10 and                   <iframe src=\"https://www.youtube-nocookie.com/embed/abcdefghijk\"></iframe>                   again https://youtu.be/dQw4w9WgXcQ, short https://youtube.com/shorts/ZYXWVUTSRQP                   broken https://youtu.be/short";
+        assert_eq!(youtube_ids(md), vec!["dQw4w9WgXcQ", "abcdefghijk", "ZYXWVUTSRQP"]);
+        assert!(youtube_ids("no videos here").is_empty());
+    }
+
+    #[test]
+    fn iso_dates_and_ago() {
+        let t = crate::util::parse_iso_unix("2026-11-17T23:14:40.617931Z").unwrap();
+        assert_eq!(t, 1_794_957_280);
+        // Same moment with an offset.
+        assert_eq!(crate::util::parse_iso_unix("2026-11-18T02:14:40+03:00"), Some(t));
+        assert_eq!(crate::util::parse_iso_unix("2026-11-17"), Some(t - (23 * 3600 + 14 * 60 + 40)));
+        assert_eq!(crate::util::parse_iso_unix("вчера"), None);
+        assert_eq!(crate::util::ru_date("2026-11-17T23:14:40Z"), "17 нояб. 2026");
+        assert_eq!(ago("2026-11-17T23:14:40Z", t + 3 * 86_400 + 5), "3 дн. назад");
+        assert_eq!(ago("2026-11-17T23:14:40Z", t + 600), "только что");
+        assert_eq!(ago("2026-11-17T23:14:40Z", t + 90 * 86_400), "3 мес. назад");
+        assert_eq!(ago("", t), "");
+    }
+
+    /// Newest pack versions and card data straight from both sources.
+    /// `cargo test live_pack_versions -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_pack_versions() {
+        crate::net::rt().block_on(async {
+            let client = crate::net::client();
+            let cfg = Config::default();
+            for (source, id, slug) in [("modrinth", "Jkb29YJU", "cobbleverse"), ("curseforge", "925200", "925200")] {
+                let hit = ModHit { source: source.into(), id: id.into(), slug: slug.into(), title: slug.into(), kind: KIND_MODPACK.into(), ..Default::default() };
+                let f = latest_pack_file(&client, &cfg, &hit).await.unwrap();
+                let d = detail(&client, &cfg, &hit, &Spec::new("", Loader::Vanilla, "")).await.unwrap();
+                println!("{source}: newest {} ({}) {} · downloads {} · updated {} · videos {:?}", f.name, f.id, f.date, d.downloads, d.updated, d.videos);
+                assert!(!f.id.is_empty() && !f.date.is_empty() && !d.updated.is_empty());
+            }
+        });
+    }
+
+    #[test]
+    fn pack_build_maps_back_to_its_catalog_entry() {
+        let mut p = crate::profiles::Profile {
+            id: "pack-x".into(),
+            name: "Cobbleverse".into(),
+            kind: crate::profiles::ProfileKind::Modpack,
+            mc_version: "1.21.1".into(),
+            loader: "fabric".into(),
+            loader_version: String::new(),
+            description: String::new(),
+            created_at: String::new(),
+            source: "modrinth:Jkb29YJU".into(),
+            pack_file: String::new(),
+            pack_version: String::new(),
+            pack_date: String::new(),
+        };
+        let hit = profile_hit(&p).unwrap();
+        assert_eq!((hit.source.as_str(), hit.id.as_str(), hit.kind.as_str()), ("modrinth", "Jkb29YJU", KIND_MODPACK));
+        p.source = "curseforge:925200".into();
+        assert_eq!(profile_hit(&p).unwrap().slug, "925200");
+        p.source = String::new();
+        assert!(profile_hit(&p).is_none());
+    }
 
     #[test]
     fn cf_sort_codes_match_api() {
@@ -2159,8 +2532,37 @@ mod tests {
             });
             let cancel = Arc::new(AtomicBool::new(false));
             let n_files = plan.files.len();
-            let failed = fetch_pack_files(&client, &Config::default(), &root, plan.files, &cancel, &mut |_| {})
+            let mut sizes: Vec<u64> = plan.files.iter().filter_map(|f| match f {
+                PackSource::Direct { size, .. } => Some(*size),
+                _ => None,
+            }).collect();
+            sizes.sort_unstable_by(|a, b| b.cmp(a));
+            println!("files {n_files}, {:.1} MB, biggest MB: {:?}", sizes.iter().sum::<u64>() as f64 / 1048576.0,
+                sizes.iter().take(6).map(|s| s / 1048576).collect::<Vec<_>>());
+            // Timeline: MB/s and files done every 2 s.
+            let done = Arc::new(std::sync::atomic::AtomicU64::new(0));
+            let stop = Arc::new(AtomicBool::new(false));
+            let sampler = {
+                let (done, stop) = (done.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    let mut prev = crate::net::bytes_total();
+                    let mut out = Vec::new();
+                    while !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let now = crate::net::bytes_total();
+                        out.push(format!("{:.1}/{}", (now - prev) as f64 / 2.0 / 1048576.0, done.load(Ordering::Relaxed)));
+                        prev = now;
+                    }
+                    out
+                })
+            };
+            let d2 = done.clone();
+            let failed = fetch_pack_files(&client, &Config::default(), &root, plan.files, &cancel, &mut |ev| {
+                if let ModEvent::Progress { done, .. } = ev { d2.store(done, Ordering::Relaxed); }
+            })
                 .await.unwrap();
+            stop.store(true, Ordering::Relaxed);
+            println!("МБ/с / файлов по 2 с: {}", sampler.join().unwrap().join(" "));
             let (n_ex, t_ex) = ex.await.unwrap();
             println!(
                 "pack {slug}: archive {:?}, overrides {n_over} ({n_ex} written in {:?}), files {n_files} failed {} — total {:?}",

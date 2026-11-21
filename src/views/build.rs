@@ -29,6 +29,7 @@ impl Launcher {
         let mut add_local_jar = false;
         let mut open_mods_dir = false;
         let mut go_to_catalog = false;
+        let mut update_pack: Option<crate::profiles::Profile> = None;
 
         let mut wipe_all = false;
         // Header
@@ -246,6 +247,55 @@ impl Launcher {
                 .font(theme::mono(11.0))
                 .color(skin.faint()),
             );
+            // Pack builds: which version is installed and whether the pack
+            // has a newer one (asked live from Modrinth / CurseForge).
+            if current_profile.kind == ProfileKind::Modpack {
+                if let Some(state) = self.pack_check(&current_profile) {
+                    ui.add_space(6.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(8.0, 6.0);
+                        let installed = if current_profile.pack_version.is_empty() {
+                            "Версия сборки неизвестна".to_string()
+                        } else {
+                            let date = crate::util::ru_date(&current_profile.pack_date);
+                            format!(
+                                "Версия сборки: {}{}",
+                                super::truncate(&current_profile.pack_version, 40),
+                                if date.is_empty() { String::new() } else { format!(" · от {date}") }
+                            )
+                        };
+                        ui.label(RichText::new(installed).font(theme::body(12.0)).color(skin.dim()));
+                        match state {
+                            crate::app::PackCheck::Checking => {
+                                ui.label(RichText::new("проверяю новую версию…").font(theme::mono(10.0)).color(skin.faint()));
+                            }
+                            crate::app::PackCheck::Current => {
+                                ui.label(RichText::new("последняя версия").font(theme::mono(10.0)).color(skin.green()));
+                            }
+                            crate::app::PackCheck::Failed => {
+                                ui.label(RichText::new("не удалось проверить версию").font(theme::mono(10.0)).color(skin.faint()));
+                            }
+                            crate::app::PackCheck::Update(newer) => {
+                                let date = crate::util::ru_date(&newer.date);
+                                let ago = crate::mods::ago(&newer.date, crate::util::now_unix());
+                                let text = if date.is_empty() {
+                                    format!("Вышла версия {}", super::truncate(&newer.name, 40))
+                                } else {
+                                    format!("Вышла версия {} · {date} ({ago})", super::truncate(&newer.name, 40))
+                                };
+                                ui.label(RichText::new(text).font(theme::body(12.0)).color(skin.ink()));
+                                let busy = self.mod_task.is_some();
+                                if widgets::button_sized(ui, skin, "Обновить сборку", Btn::Primary, !busy, 26.0, 11.0, 12.0)
+                                    .on_hover_text("Скачать новую версию пака в эту же сборку — миры, скриншоты и настройки останутся")
+                                    .clicked()
+                                {
+                                    update_pack = Some(current_profile.clone());
+                                }
+                            }
+                        }
+                    });
+                }
+            }
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
@@ -427,6 +477,10 @@ impl Launcher {
             crate::util::open_path(&p_dir);
         }
 
+        if let Some(profile) = update_pack {
+            let ctx = ui.ctx().clone();
+            self.update_pack_build(&ctx, &profile);
+        }
         if go_to_catalog {
             self.go(crate::app::Tab::Mods);
             self.mods_page = 0; // Catalog

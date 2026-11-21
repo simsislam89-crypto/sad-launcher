@@ -38,6 +38,22 @@ pub struct Profile {
     /// reinstalling the same pack refreshes its build instead of cloning it.
     #[serde(default)]
     pub source: String,
+    /// Installed pack version: file/version id at its source (compared
+    /// with the newest one to offer «Обновить сборку»), its name and date.
+    #[serde(default)]
+    pub pack_file: String,
+    #[serde(default)]
+    pub pack_version: String,
+    #[serde(default)]
+    pub pack_date: String,
+}
+
+/// Which version of a pack a build holds.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PackStamp {
+    pub file: String,
+    pub version: String,
+    pub date: String,
 }
 
 impl Profile {
@@ -56,6 +72,9 @@ impl Profile {
             description: "Стандартный профиль Мадрид".into(),
             created_at: String::new(),
             source: String::new(),
+            pack_file: String::new(),
+            pack_version: String::new(),
+            pack_date: String::new(),
         }
     }
 }
@@ -214,6 +233,9 @@ pub fn create_custom_profile(
         description: description.trim().to_string(),
         created_at: crate::util::file_stamp(),
         source: String::new(),
+        pack_file: String::new(),
+        pack_version: String::new(),
+        pack_date: String::new(),
     };
     std::fs::create_dir_all(profile_mods_dir(cfg, &id))?;
     profiles.push(profile.clone());
@@ -223,7 +245,13 @@ pub fn create_custom_profile(
 
 /// The build of a modpack. The same pack installed again reuses its build:
 /// mods and configs are replaced, worlds, screenshots and options stay.
-pub fn upsert_modpack_profile(cfg: &Config, title: &str, source: &str, spec: &Spec) -> Result<Profile> {
+pub fn upsert_modpack_profile(
+    cfg: &Config,
+    title: &str,
+    source: &str,
+    spec: &Spec,
+    stamp: &PackStamp,
+) -> Result<Profile> {
     let mut profiles = load_profiles();
     let existing = profiles.iter().position(|p| {
         p.kind == ProfileKind::Modpack && ((!source.is_empty() && p.source == source) || p.name == title)
@@ -237,6 +265,9 @@ pub fn upsert_modpack_profile(cfg: &Config, title: &str, source: &str, spec: &Sp
             p.loader_version = spec.version.clone();
             p.description = description;
             p.source = source.to_string();
+            p.pack_file = stamp.file.clone();
+            p.pack_version = stamp.version.clone();
+            p.pack_date = stamp.date.clone();
             let p = p.clone();
             clear_for_reinstall(&cfg.instance_dir_for(&p.id));
             p
@@ -253,6 +284,9 @@ pub fn upsert_modpack_profile(cfg: &Config, title: &str, source: &str, spec: &Sp
                 description,
                 created_at: crate::util::file_stamp(),
                 source: source.to_string(),
+                pack_file: stamp.file.clone(),
+                pack_version: stamp.version.clone(),
+                pack_date: stamp.date.clone(),
             };
             profiles.push(p.clone());
             p

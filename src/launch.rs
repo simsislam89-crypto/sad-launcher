@@ -221,6 +221,9 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
 
     let args = build_args(shared, cfg, &resolved, connect.map(|s| s.to_string()))?;
     fps_defaults(&instance);
+    if !madrid && matches!(loader, crate::loader::Loader::Forge | crate::loader::Loader::NeoForge) {
+        quiet_version_check(&instance);
+    }
     let effects_cfg = crate::effects::load();
     if let Err(e) = crate::effects::apply_to_instance(&instance, &resolved.id, &effects_cfg) {
         shared.log(crate::shared::LogKind::Warn, format!("Эффекты не применились: {e:#}"));
@@ -732,6 +735,52 @@ pub fn incompatible(jar: &Path, loader: crate::loader::Loader) -> bool {
 
 /// Disables (renames to `.disabled`) jars that would stop the game.
 /// Returns their file names.
+/// Forge/NeoForge ask every mod's update URL at start and then show
+/// «update available» for Forge and the mods. A pack pins exact versions
+/// on purpose — updating one mod by hand breaks it — so in pack builds the
+/// check is switched off (`config/fml.toml: versionCheck = false`): no
+/// misleading prompt and ~100 fewer HTTP requests while the game loads.
+/// Only this one key is touched; everything else in the file stays.
+pub fn quiet_version_check(instance: &Path) {
+    let path = instance.join("config").join("fml.toml");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(new) = with_version_check_off(&text) {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&path, new);
+    }
+}
+
+/// `fml.toml` text with `versionCheck = false`; None when already so.
+fn with_version_check_off(text: &str) -> Option<String> {
+    let mut found = false;
+    let mut changed = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let key = line.trim_start();
+        if key.starts_with("versionCheck") && key[12..].trim_start().starts_with('=') {
+            found = true;
+            let value = key.split_once('=').map(|(_, v)| v.trim()).unwrap_or("");
+            if !value.starts_with("false") {
+                let indent = &line[..line.len() - key.len()];
+                out.push(format!("{indent}versionCheck = false"));
+                changed = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !found {
+        // Top-level key: it must come before any [table] header.
+        out.insert(0, "versionCheck = false".to_string());
+        changed = true;
+    }
+    changed.then(|| out.join("
+") + "
+")
+}
+
 pub fn preflight_mods(mods_dir: &Path, loader: crate::loader::Loader) -> Vec<String> {
     let mut off = Vec::new();
     let Ok(entries) = std::fs::read_dir(mods_dir) else { return off };
@@ -865,6 +914,23 @@ mod tests {
         zip.start_file("fabric.mod.json", zip::write::SimpleFileOptions::default()).unwrap();
         zip.write_all(b"{}").unwrap();
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn version_check_is_switched_off_only_once() {
+        let pack = "#Early window
+earlyWindowControl = true
+	versionCheck = true
+[section]
+x = 1
+";
+        let fixed = with_version_check_off(pack).unwrap();
+        assert!(fixed.contains("	versionCheck = false"));
+        assert!(fixed.contains("earlyWindowControl = true") && fixed.contains("[section]"));
+        assert_eq!(with_version_check_off(&fixed), None);
+        let created = with_version_check_off("").unwrap();
+        assert_eq!(created, "versionCheck = false
+");
     }
 
     #[test]

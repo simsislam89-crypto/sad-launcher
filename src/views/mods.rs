@@ -1,6 +1,6 @@
 //! Моды — catalog, the user's own build list, installed jars, project card.
 
-use super::{downloads_label, search_field, truncate};
+use super::{downloads_label, search_field, short_date, truncate};
 use crate::app::Launcher;
 use crate::icons::Icon;
 use crate::mods::{self, ModHit};
@@ -807,6 +807,19 @@ fn hit_card(
         p.rect_filled(pill, CornerRadius::same(8), egui::Color32::from_black_alpha(190));
         p.galley(Pos2::new(pill.left() + 6.0, pill.center().y - galley.size().y / 2.0), galley, skin.ink());
     }
+    // Freshness: when the project last shipped a file («3 дн. назад»).
+    let ago = mods::ago(&hit.updated, crate::util::now_unix());
+    if !ago.is_empty() {
+        let font = theme::mono(8.5);
+        let galley = p.layout_no_wrap(ago, font, skin.ink());
+        let w = galley.size().x + 12.0 + 12.0;
+        // Top-right corner: the bottom-left one holds «1.20.1 · Forge».
+        let pill = Rect::from_min_size(Pos2::new(irect.right() - 6.0 - w, irect.top() + 6.0), Vec2::new(w, 16.0));
+        p.rect_filled(pill, CornerRadius::same(8), egui::Color32::from_black_alpha(190));
+        let icon = Rect::from_center_size(Pos2::new(pill.left() + 10.0, pill.center().y), Vec2::splat(9.0));
+        crate::icons::paint(&p, icon, Icon::Refresh, skin.ink(), 1.3);
+        p.galley(Pos2::new(pill.left() + 18.0, pill.center().y - galley.size().y / 2.0), galley, skin.ink());
+    }
 
     // Text lines are measured with the real font and end with «…» —
     // nothing runs into the next line or under the buttons.
@@ -817,15 +830,10 @@ fn hit_card(
     widgets::text_fit(&p, Pos2::new(x, ty + 20.0), Align2::LEFT_TOP, &hit.summary, theme::body(11.0), skin.dim(), w);
     let cats = if hit.categories.is_empty() { "—".to_string() } else { hit.categories.join(" · ") };
     widgets::text_fit(&p, Pos2::new(x, ty + 38.0), Align2::LEFT_TOP, &cats, theme::body(11.0), skin.ink().gamma_multiply(0.85), w);
+    // Downloads first (live from the source), then what is inside a pack.
     let meta = match info {
-        Some(info) => {
-            widgets::text_fit(&p, Pos2::new(x, ty + 55.0), Align2::LEFT_TOP, &info.label(), theme::mono(10.5), skin.faint(), w);
-            None
-        }
-        None if hit.kind == mods::KIND_MODPACK => {
-            widgets::text_fit(&p, Pos2::new(x, ty + 55.0), Align2::LEFT_TOP, "считаю моды…", theme::mono(10.5), skin.faint(), w);
-            None
-        }
+        Some(info) => Some(format!("{} · {}", downloads_label(hit.downloads), info.label())),
+        None if hit.kind == mods::KIND_MODPACK => Some(format!("{} · считаю моды…", downloads_label(hit.downloads))),
         None => Some(format!("{} · {}", downloads_label(hit.downloads), if hit.source == "curseforge" { "CurseForge" } else { "Modrinth" })),
     };
     if let Some(meta_txt) = meta {
@@ -915,12 +923,18 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
             ui.label(RichText::new(truncate(&hit.title, 48)).font(theme::display(24.0)).color(skin.ink()));
             let author = detail.as_ref().map(|d| d.author.clone()).filter(|a| !a.is_empty()).unwrap_or_else(|| hit.author.clone());
             let downloads = detail.as_ref().map(|d| d.downloads).unwrap_or(hit.downloads);
+            let updated = detail.as_ref().map(|d| d.updated.clone()).filter(|u| !u.is_empty()).unwrap_or_else(|| hit.updated.clone());
+            let updated = match (crate::util::ru_date(&updated), mods::ago(&updated, crate::util::now_unix())) {
+                (date, _) if date.is_empty() => String::new(),
+                (date, ago) => format!(" · обновлено {date} ({ago})"),
+            };
             ui.add(
                 egui::Label::new(
                     RichText::new(format!(
-                        "{} · {} скачиваний{}",
+                        "{} · {} скачиваний{}{}",
                         if author.is_empty() { "автор неизвестен".to_string() } else { author },
                         downloads_label(downloads),
+                        updated,
                         if hit.tags.is_empty() { String::new() } else { format!(" · {}", hit.tags) }
                     ))
                     .font(theme::mono(10.0))
@@ -1011,6 +1025,7 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                     ui.label(RichText::new("Описание можно открыть на сайте проекта.").font(theme::body(11.0)).color(skin.faint()));
                 }
                 Some(Ok(d)) => {
+                    draw_videos(app, ui, skin, &ctx, &hit, &d.videos);
                     if !d.gallery.is_empty() {
                         egui::ScrollArea::horizontal()
                             .id_salt("mod-gallery")
@@ -1069,7 +1084,13 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                                 widgets::status_dot(ui, if fits { skin.ink() } else { skin.faint() }, fits);
                                 ui.label(RichText::new(truncate(&v.name, 46)).font(theme::mono(10.0)).color(if fits { skin.ink() } else { skin.dim() }));
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    let targets = format!("{} · {}", truncate(&v.game_versions.join(", "), 40), v.loaders.join("/"));
+                                    let date = short_date(&v.date);
+                                    let targets = format!(
+                                        "{} · {}{}",
+                                        truncate(&v.game_versions.join(", "), 40),
+                                        v.loaders.join("/"),
+                                        if date.is_empty() { String::new() } else { format!(" · {date}") }
+                                    );
                                     ui.label(RichText::new(targets).font(theme::mono(8.5)).color(skin.faint()));
                                 });
                             });
@@ -1103,6 +1124,89 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
         });
         let _ = open::that_detached(&url);
     }
+}
+
+/// «Видео»: YouTube previews from the description — how the game looks
+/// with this pack. A click opens the video in the browser (egui has no
+/// video player, and a built-in one would cost tens of МБ). Without
+/// videos in the description — one button to search YouTube.
+fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context, hit: &ModHit, videos: &[String]) {
+    widgets::section_label(ui, skin, "ВИДЕО");
+    ui.add_space(6.0);
+    if videos.is_empty() {
+        ui.horizontal(|ui| {
+            let what = if hit.kind == mods::KIND_MODPACK { "modpack" } else { "mod" };
+            if widgets::button_icon(ui, skin, Icon::Search, "Найти видео на YouTube", Btn::Outline, true, 28.0, 11.5, 12.0)
+                .on_hover_text("В описании проекта нет видео — откроется поиск YouTube")
+                .clicked()
+            {
+                let query = format!("{} minecraft {what}", hit.title);
+                let _ = open::that_detached(format!("https://www.youtube.com/results?search_query={}", enc_query(&query)));
+            }
+            ui.label(RichText::new("автор не добавил видео в описание").font(theme::mono(9.0)).color(skin.faint()));
+        });
+        ui.add_space(12.0);
+        return;
+    }
+    egui::ScrollArea::horizontal().id_salt("mod-videos").max_height(170.0).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for id in videos {
+                let (r, resp) = ui.allocate_exact_size(Vec2::new(240.0, 135.0), Sense::click());
+                let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
+                let p = ui.painter();
+                p.rect_filled(r, CornerRadius::same(10), skin.fill());
+                if ui.is_rect_visible(r) {
+                    let thumb = format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg");
+                    if let Some(tex) = app.remote_image(ctx, &thumb, 480) {
+                        p.image(
+                            tex.id(),
+                            r,
+                            cover_uv(tex.size_vec2(), r.size()),
+                            egui::Color32::WHITE.gamma_multiply(0.75 + 0.25 * hover),
+                        );
+                    }
+                }
+                // Glass play button: ring + triangle, no solid fill.
+                let c = r.center();
+                let radius = 20.0 + 2.0 * hover;
+                p.circle_filled(c, radius, egui::Color32::from_black_alpha(150));
+                p.circle_stroke(c, radius, Stroke::new(1.5, skin.ink().gamma_multiply(0.9)));
+                let s = 7.0 + hover;
+                p.add(egui::Shape::convex_polygon(
+                    vec![Pos2::new(c.x - s * 0.7, c.y - s), Pos2::new(c.x - s * 0.7, c.y + s), Pos2::new(c.x + s, c.y)],
+                    skin.ink(),
+                    Stroke::NONE,
+                ));
+                p.rect_stroke(
+                    r,
+                    CornerRadius::same(10),
+                    Stroke::new(1.0, theme::lerp_color(skin.line_soft(), skin.fill_strong(), hover)),
+                    egui::StrokeKind::Inside,
+                );
+                if resp.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                }
+                if resp.on_hover_text("Смотреть на YouTube").clicked() {
+                    let _ = open::that_detached(format!("https://www.youtube.com/watch?v={id}"));
+                }
+            }
+        });
+    });
+    ui.add_space(12.0);
+}
+
+/// Percent-encodes a search query for a URL.
+fn enc_query(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 3);
+    for b in text.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// UV rect that crops a texture to fill `target` (CSS object-fit: cover).

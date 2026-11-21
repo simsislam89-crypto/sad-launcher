@@ -302,6 +302,7 @@ fn make_modrinth_hit(slug: &str, title: &str) -> ModHit {
         file_name: None,
         tags: String::new(),
         categories: Vec::new(),
+        updated: String::new(),
     }
 }
 

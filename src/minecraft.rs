@@ -1447,14 +1447,12 @@ async fn install_assets<F: FnMut(InstallEvent) + Send>(
             });
         }
     };
-    // On the shared runtime small files spread over several connections;
-    // isolated runtimes (server bootstrap) keep the client they were given.
-    let spread = crate::net::is_shared_rt();
-    for (i, job) in plan.into_iter().enumerate() {
+    // `net::fetch_to` spreads the requests over several connections.
+    for job in plan {
         if cancel.load(Ordering::Relaxed) {
             bail!("Отменено");
         }
-        let client = if spread { crate::net::small_file_client(i) } else { client.clone() };
+        let client = client.clone();
         let permit = sem.clone().acquire_owned().await?;
         set.spawn(async move {
             let _permit = permit;
