@@ -488,6 +488,15 @@ fn build_args(_shared: &Arc<Shared>, cfg: &Config, resolved: &Resolved, connect:
         out.push(subst(&arg, &map));
     }
 
+    // Live tests only (`MADRID_DEV_WORLD=<world>`): straight into a
+    // singleplayer world, where debug keys such as F3+T work.
+    if connect.is_none() && mc_release(&resolved.id) >= (1, 20) {
+        if let Some(world) = std::env::var("MADRID_DEV_WORLD").ok().filter(|w| !w.trim().is_empty()) {
+            out.push("--quickPlaySingleplayer".into());
+            out.push(world);
+        }
+    }
+
     // The game joins a server only when asked explicitly — the «На сервер»
     // button, a friend code, never silently.
     if let Some(addr) = connect {

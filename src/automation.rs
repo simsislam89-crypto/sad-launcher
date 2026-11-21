@@ -1,6 +1,7 @@
 //! Автокликер (строго внутри окна Minecraft) и защита от АФК.
-//! На Windows клики и F3+T идут сообщениями прямо в окно игры (`PostMessageW`,
-//! не через курсор), бинды — `GetAsyncKeyState`, окно — по PID/классу;
+//! На Windows: клик — настоящий, пока игра держит курсор внутри своего окна,
+//! иначе сообщением прямо в окно (`PostMessageW`); F3+T — сообщениями, когда
+//! игра в фокусе; бинды — `GetAsyncKeyState`, окно — по PID/классу;
 //! на других ОС собирается с безопасной заглушкой, чтобы не ломать кросс-сборку.
 
 use crate::effects::EffectsConfig;
@@ -32,9 +33,11 @@ pub struct AutomationSnapshot {
     pub autoclicker: bool,
     pub afk_ticks: u64,
     pub click_count: u64,
-    /// Clicking while the game window is in the background (its pause on
-    /// lost focus is off, so no menu can catch the clicks).
-    pub click_background: bool,
+    /// Effects changed while the player was away: F3+T waits for the game
+    /// to be played again (focused, cursor captured).
+    pub reload_pending: bool,
+    /// How many F3+T reloads were sent (the app reports each one).
+    pub reload_seq: u64,
     pub next_afk_in: Option<u32>,
     pub mc_title: String,
     pub toggle_seq: u64,
@@ -49,7 +52,8 @@ impl Default for AutomationSnapshot {
             autoclicker: false,
             afk_ticks: 0,
             click_count: 0,
-            click_background: false,
+            reload_pending: false,
+            reload_seq: 0,
             next_afk_in: None,
             mc_title: String::new(),
             toggle_seq: 0,
@@ -57,25 +61,17 @@ impl Default for AutomationSnapshot {
     }
 }
 
-/// What the launcher needs from the game's `options.txt`.
+/// Keys of «reload resource packs» from the game's `options.txt`: the
+/// debug modifier (F3) and the reload key (T), rebindable since 1.21.9.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct GameOptions {
-    /// `pauseOnLostFocus` (F3+P): the pause menu opens when the window
-    /// loses focus — debug keys are ignored and clicks would hit its buttons.
-    pub pause_on_lost_focus: bool,
-    /// Virtual keys of the debug modifier (F3) and «reload resource packs»
-    /// (T) — rebindable since 1.21.9.
-    pub debug_modifier: u16,
-    pub reload_key: u16,
+pub struct ReloadKeys {
+    pub modifier: u16,
+    pub key: u16,
 }
 
-impl Default for GameOptions {
+impl Default for ReloadKeys {
     fn default() -> Self {
-        Self {
-            pause_on_lost_focus: true,
-            debug_modifier: 0x72,
-            reload_key: 0x54,
-        }
+        Self { modifier: 0x72, key: 0x54 }
     }
 }
 
@@ -92,40 +88,36 @@ fn mc_key_vk(name: &str) -> Option<u16> {
     }
 }
 
-pub fn parse_game_options(text: &str) -> GameOptions {
-    let mut o = GameOptions::default();
+pub fn parse_reload_keys(text: &str) -> ReloadKeys {
+    let mut o = ReloadKeys::default();
     for line in text.lines() {
         let Some((key, val)) = line.split_once(':') else { continue };
         match key {
-            "pauseOnLostFocus" => o.pause_on_lost_focus = val.trim() != "false",
-            "key_key.debug.modifier" => o.debug_modifier = mc_key_vk(val).unwrap_or(o.debug_modifier),
-            "key_key.debug.reloadResourcePacks" => o.reload_key = mc_key_vk(val).unwrap_or(o.reload_key),
+            "key_key.debug.modifier" => o.modifier = mc_key_vk(val).unwrap_or(o.modifier),
+            "key_key.debug.reloadResourcePacks" => o.key = mc_key_vk(val).unwrap_or(o.key),
             _ => {}
         }
     }
     o
 }
 
-pub fn read_game_options(instance: &std::path::Path) -> GameOptions {
+pub fn read_reload_keys(instance: &std::path::Path) -> ReloadKeys {
     std::fs::read_to_string(instance.join("options.txt"))
-        .map(|t| parse_game_options(&t))
+        .map(|t| parse_reload_keys(&t))
         .unwrap_or_default()
 }
 
-/// Makes a running Minecraft reload its resource packs (F3+T) so a changed
-/// effects pack shows at once — keys go straight to the game window, no
-/// focus needed. False when no game window was found.
-pub fn reload_game_resources(child_pid: u32, instance: &std::path::Path) -> bool {
+/// The game window (HWND as a number), if there is one.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn game_window(child_pid: u32) -> Option<usize> {
     let (found, hwnd, _) = platform::find_minecraft_window(child_pid);
-    if !found {
-        return false;
-    }
-    let opts = read_game_options(instance);
-    // The player is in the launcher, so the game shows its pause menu, and
-    // Minecraft ignores debug keys while any screen is open: Esc closes the
-    // menu first (it reopens on the next frame by itself).
-    let close_menu = opts.pause_on_lost_focus && !platform::is_foreground(hwnd);
-    platform::send_reload_keys(hwnd, opts.debug_modifier, opts.reload_key, close_menu)
+    found.then_some(hwnd)
+}
+
+/// Live tests: whether the game holds the cursor (playing in the world).
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn game_cursor_captured(hwnd: usize) -> bool {
+    platform::cursor_captured(hwnd)
 }
 
 pub fn clamp_interval_secs(secs: u32) -> u32 {
@@ -202,9 +194,9 @@ struct RuntimeConfig {
     capturing_bind: AtomicBool,
     toggle_seq: AtomicU64,
     stop: AtomicBool,
-    /// Folder of the active build: its options.txt says whether clicks may
-    /// go to the game in the background.
-    instance: Mutex<std::path::PathBuf>,
+    /// F3+T is owed to the game; keys packed as `modifier << 16 | key`.
+    reload_pending: AtomicBool,
+    reload_keys: AtomicU32,
 }
 
 impl RuntimeConfig {
@@ -220,7 +212,8 @@ impl RuntimeConfig {
             capturing_bind: AtomicBool::new(false),
             toggle_seq: AtomicU64::new(0),
             stop: AtomicBool::new(false),
-            instance: Mutex::new(std::path::PathBuf::new()),
+            reload_pending: AtomicBool::new(false),
+            reload_keys: AtomicU32::new(0),
         }
     }
 }
@@ -273,12 +266,16 @@ impl AutomationHandle {
             .store(parse_bind_vk(&cfg.autoclicker_bind).unwrap_or(0) as u32, Ordering::Relaxed);
     }
 
-    pub fn set_instance(&self, dir: &std::path::Path) {
-        if let Ok(mut cur) = self.rt.instance.lock() {
-            if cur.as_path() != dir {
-                *cur = dir.to_path_buf();
-            }
-        }
+    /// The effects pack changed: make the running game reload it (F3+T).
+    /// Sent as soon as the game is being played — focused, cursor captured,
+    /// no menu open — because Minecraft 26.x (SDL) takes keys only in focus
+    /// and ignores debug keys while any screen (pause menu!) is open.
+    pub fn request_reload(&self, instance: &std::path::Path) {
+        let k = read_reload_keys(instance);
+        self.rt
+            .reload_keys
+            .store(((k.modifier as u32) << 16) | k.key as u32, Ordering::Relaxed);
+        self.rt.reload_pending.store(true, Ordering::Relaxed);
     }
 
     pub fn set_capturing_bind(&self, capturing: bool) {
@@ -308,8 +305,7 @@ fn worker_loop(
     let mut fine_timer = false;
     let mut cached_fg = FgInfo::default();
     let mut last_fg = Instant::now() - Duration::from_secs(1);
-    let mut game_opts = GameOptions::default();
-    let mut last_opts = Instant::now() - Duration::from_secs(10);
+    let mut reload_seq = 0u64;
 
     while !rt.stop.load(Ordering::Relaxed) {
         let capturing = rt.capturing_bind.load(Ordering::Relaxed);
@@ -402,18 +398,12 @@ fn worker_loop(
         let autoclicker_on = rt.autoclicker.load(Ordering::Relaxed);
         let click_ms = rt.autoclicker_ms.load(Ordering::Relaxed).clamp(1, 1000) as u64;
         let click_every = Duration::from_millis(click_ms);
-        if autoclicker_on && last_opts.elapsed() >= Duration::from_secs(2) {
-            let dir = rt.instance.lock().map(|d| d.clone()).unwrap_or_default();
-            game_opts = read_game_options(&dir);
-            last_opts = Instant::now();
-        }
-        // Clicks are posted to the game window itself, never through the
-        // cursor: they cannot land on another window or the title bar's ×.
-        // In the background only with pause-on-lost-focus off — otherwise
-        // the pause menu would take them (and «Disconnect» is a button).
-        // Only our own game: its options.txt is the one read above.
-        let click_background = !mc_focused && child_running && !game_opts.pause_on_lost_focus;
-        let clicking = autoclicker_on && mc_running && mc_hwnd != 0 && !capturing && (mc_focused || click_background);
+        // Only into the focused game window. Captured cursor (in the world):
+        // a real click — Windows keeps that cursor inside the game, and
+        // Minecraft 26.x reads buttons there only from raw input. Free
+        // cursor (inventory, menus): a click posted to the game window, so
+        // it never lands on another window or the title bar's ×.
+        let clicking = autoclicker_on && mc_running && mc_focused && mc_hwnd != 0 && !capturing;
         // 1 ms timer only while clicking: Windows sleeps in ~15.6 ms steps
         // otherwise, so «10 мс» would really click every ~16 ms.
         if clicking != fine_timer {
@@ -422,7 +412,7 @@ fn worker_loop(
         }
         if clicking {
             if last_click.elapsed() >= click_every {
-                if platform::send_mouse_click(mc_hwnd, rt.autoclicker_rmb.load(Ordering::Relaxed)) {
+                if platform::click_game(mc_hwnd, rt.autoclicker_rmb.load(Ordering::Relaxed)) {
                     click_count += 1;
                 }
                 // Fixed cadence (no drift from the time spent sending), but
@@ -434,6 +424,19 @@ fn worker_loop(
             }
         }
 
+        let mut reload_pending = rt.reload_pending.load(Ordering::Relaxed);
+        if reload_pending && !mc_running {
+            rt.reload_pending.store(false, Ordering::Relaxed);
+            reload_pending = false;
+        } else if reload_pending && mc_focused && platform::cursor_captured(mc_hwnd) {
+            let keys = rt.reload_keys.load(Ordering::Relaxed);
+            if platform::send_reload_keys(mc_hwnd, (keys >> 16) as u16, keys as u16) {
+                reload_seq += 1;
+            }
+            rt.reload_pending.store(false, Ordering::Relaxed);
+            reload_pending = false;
+        }
+
         let toggle_seq = rt.toggle_seq.load(Ordering::Relaxed);
         let state_changed = {
             if let Ok(mut guard) = snap.lock() {
@@ -442,7 +445,8 @@ fn worker_loop(
                     || guard.anti_afk != anti_afk_on
                     || guard.autoclicker != autoclicker_on
                     || guard.toggle_seq != toggle_seq
-                    || guard.click_background != (clicking && click_background)
+                    || guard.reload_pending != reload_pending
+                    || guard.reload_seq != reload_seq
                     || guard.mc_title != mc_title;
                 guard.mc_running = mc_running;
                 guard.mc_focused = mc_focused;
@@ -450,7 +454,8 @@ fn worker_loop(
                 guard.autoclicker = autoclicker_on;
                 guard.afk_ticks = afk_ticks;
                 guard.click_count = click_count;
-                guard.click_background = clicking && click_background;
+                guard.reload_pending = reload_pending;
+                guard.reload_seq = reload_seq;
                 guard.next_afk_in = next_afk_in;
                 guard.mc_title = mc_title;
                 guard.toggle_seq = toggle_seq;
@@ -546,7 +551,12 @@ mod platform {
         u: InputUnion,
     }
 
+    const INPUT_MOUSE: u32 = 0;
     const INPUT_KEYBOARD: u32 = 1;
+    const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
+    const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
+    const MOUSEEVENTF_RIGHTDOWN: u32 = 0x0008;
+    const MOUSEEVENTF_RIGHTUP: u32 = 0x0010;
     const WM_LBUTTONDOWN: u32 = 0x0201;
     const WM_LBUTTONUP: u32 = 0x0202;
     const WM_RBUTTONDOWN: u32 = 0x0204;
@@ -575,6 +585,68 @@ mod platform {
         fn SendInput(c_inputs: u32, p_inputs: *const WinInput, cb_size: i32) -> u32;
         fn PostMessageW(hwnd: *mut c_void, msg: u32, w_param: usize, l_param: isize) -> i32;
         fn GetClientRect(hwnd: *mut c_void, rect: *mut WinRect) -> i32;
+        fn GetWindowRect(hwnd: *mut c_void, rect: *mut WinRect) -> i32;
+        fn GetClipCursor(rect: *mut WinRect) -> i32;
+        fn GetCursorInfo(info: *mut CursorInfo) -> i32;
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct CursorInfo {
+        cb_size: u32,
+        flags: u32,
+        cursor: usize,
+        x: i32,
+        y: i32,
+    }
+
+    /// The game holds the cursor (playing in the world): hidden and clipped
+    /// inside the game window. Free cursor = some screen is open.
+    pub(super) fn cursor_captured(hwnd: usize) -> bool {
+        const CURSOR_SHOWING: u32 = 1;
+        if hwnd == 0 {
+            return false;
+        }
+        let mut info = CursorInfo { cb_size: std::mem::size_of::<CursorInfo>() as u32, ..Default::default() };
+        let (mut clip, mut win) = (WinRect::default(), WinRect::default());
+        // SAFETY: plain out-parameters of the right size.
+        let ok = unsafe {
+            GetCursorInfo(&mut info) != 0
+                && GetClipCursor(&mut clip) != 0
+                && GetWindowRect(hwnd as *mut c_void, &mut win) != 0
+        };
+        ok && info.flags & CURSOR_SHOWING == 0
+            && clip.left >= win.left
+            && clip.top >= win.top
+            && clip.right <= win.right
+            && clip.bottom <= win.bottom
+    }
+
+    /// One autoclicker click into the focused game (see the worker).
+    pub(super) fn click_game(hwnd: usize, rmb: bool) -> bool {
+        if cursor_captured(hwnd) {
+            send_input_click(rmb)
+        } else {
+            send_mouse_click(hwnd, rmb)
+        }
+    }
+
+    /// A real click at the cursor — only while the game clips it.
+    fn send_input_click(rmb: bool) -> bool {
+        let (down, up) = if rmb {
+            (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
+        } else {
+            (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
+        };
+        let ev = |flags| WinInput {
+            input_type: INPUT_MOUSE,
+            u: InputUnion {
+                mi: MouseInput { dx: 0, dy: 0, mouse_data: 0, dw_flags: flags, time: 0, dw_extra_info: 0 },
+            },
+        };
+        let inputs = [ev(down), ev(up)];
+        // SAFETY: a valid array of INPUT structs of the declared size.
+        unsafe { SendInput(2, inputs.as_ptr(), std::mem::size_of::<WinInput>() as i32) == 2 }
     }
 
     #[repr(C)]
@@ -586,6 +658,7 @@ mod platform {
         bottom: i32,
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn is_foreground(hwnd: usize) -> bool {
         hwnd != 0 && unsafe { GetForegroundWindow() } as usize == hwnd
     }
@@ -596,14 +669,10 @@ mod platform {
         fn timeEndPeriod(u_period: u32) -> u32;
     }
 
-    /// F3+T into the game window as posted key messages: Minecraft reloads
-    /// its resource packs (the effects pack among them) without focus and
-    /// without the player pressing anything. Scan codes ride in lParam —
-    /// GLFW maps keys by scan code. One burst, no pauses: GLFW handles the
-    /// whole queue in one poll, before the next frame could reopen the
-    /// pause menu that `close_menu` (Esc) shuts.
-    pub(super) fn send_reload_keys(hwnd: usize, modifier: u16, key: u16, close_menu: bool) -> bool {
-        const VK_ESCAPE: u16 = 0x1B;
+    /// F3+T into the game window as posted key messages, sent while the
+    /// game is focused and played (SDL in 26.x drops keys of an unfocused
+    /// window). Scan codes ride in lParam — GLFW and SDL map keys by them.
+    pub(super) fn send_reload_keys(hwnd: usize, modifier: u16, key: u16) -> bool {
         if hwnd == 0 {
             return false;
         }
@@ -613,15 +682,10 @@ mod platform {
             let flags = if up { (1isize << 30) | (1isize << 31) } else { 0 };
             1isize | (sc << 16) | flags
         };
-        let mut keys: Vec<(u32, u16)> = Vec::with_capacity(6);
-        if close_menu {
-            keys.push((WM_KEYDOWN, VK_ESCAPE));
-            keys.push((WM_KEYUP, VK_ESCAPE));
-        }
-        keys.extend([(WM_KEYDOWN, modifier), (WM_KEYDOWN, key), (WM_KEYUP, key), (WM_KEYUP, modifier)]);
         // SAFETY: posting messages to a window handle only queues them; a
         // stale handle makes PostMessageW fail, nothing else.
-        keys.into_iter()
+        [(WM_KEYDOWN, modifier), (WM_KEYDOWN, key), (WM_KEYUP, key), (WM_KEYUP, modifier)]
+            .into_iter()
             .map(|(msg, vk)| unsafe { PostMessageW(h, msg, vk as usize, lp(vk, msg == WM_KEYUP)) } != 0)
             .fold(true, |ok, sent| ok && sent)
     }
@@ -674,7 +738,7 @@ mod platform {
         // use GLFW too, and the autoclicker must never click there).
         let class_name = win_text(hwnd, true);
         let mc_title = title.to_ascii_lowercase().contains("minecraft");
-        if (class_name == "GLFW30" && mc_title) || class_name == "LWJGL" {
+        if ((class_name == "GLFW30" || class_name == "SDL_app") && mc_title) || class_name == "LWJGL" {
             return Some(title);
         }
         None
@@ -868,15 +932,15 @@ mod platform {
         (false, 0, String::new())
     }
 
-    pub(super) fn send_mouse_click(_hwnd: usize, _rmb: bool) -> bool {
+    pub(super) fn click_game(_hwnd: usize, _rmb: bool) -> bool {
         false
     }
 
-    pub(super) fn is_foreground(_hwnd: usize) -> bool {
+    pub(super) fn cursor_captured(_hwnd: usize) -> bool {
         false
     }
 
-    pub(super) fn send_reload_keys(_hwnd: usize, _modifier: u16, _key: u16, _close_menu: bool) -> bool {
+    pub(super) fn send_reload_keys(_hwnd: usize, _modifier: u16, _key: u16) -> bool {
         false
     }
 
@@ -914,23 +978,57 @@ mod tests {
     }
 
     #[cfg(all(windows, target_pointer_width = "64"))]
+    /// Live helper: posts input to a running Minecraft window, to see what
+    /// the game really takes. `MADRID_POST=lmb|rmb|f3` (10 clicks / F3).
+    /// `cargo test --bin sad-launcher live_post_input -- --ignored --nocapture`
     #[test]
-    fn reads_pause_and_debug_keys_from_options() {
-        assert_eq!(parse_game_options(""), GameOptions::default());
-        let o = parse_game_options(
-            "pauseOnLostFocus:false
-key_key.debug.modifier:key.keyboard.f4
-key_key.debug.reloadResourcePacks:key.keyboard.r
-",
+    #[ignore]
+    fn live_post_input() {
+        let what = std::env::var("MADRID_POST").unwrap_or_else(|_| "lmb".into());
+        let (found, hwnd, title) = platform::find_minecraft_window(0);
+        assert!(found, "no Minecraft window");
+        println!(
+            "окно «{title}», в фокусе={}, курсор захвачен={}",
+            platform::is_foreground(hwnd),
+            platform::cursor_captured(hwnd)
         );
-        assert!(!o.pause_on_lost_focus);
-        assert_eq!((o.debug_modifier, o.reload_key), (0x73, 0x52));
+        for _ in 0..10 {
+            match what.as_str() {
+                // Fullbright on / off in the effects pack, then F3+T.
+                "bright" | "plain" => {
+                    let cfg = crate::config::load();
+                    let mc = std::env::var("MADRID_LIVE_MC").unwrap_or_else(|_| "26.3".into());
+                    let mut fx = crate::effects::EffectsConfig::default();
+                    fx.fullbright = what == "bright";
+                    let jar = crate::effects::client_jar(&cfg, &mc);
+                    let rep = crate::effects::apply_to_instance(&cfg.instance_dir_for("default"), &mc, &fx, jar.as_deref()).unwrap();
+                    let keys = read_reload_keys(&cfg.instance_dir_for("default"));
+                    println!("пак записан={}, F3+T={}", rep.pack_written, platform::send_reload_keys(hwnd, keys.modifier, keys.key));
+                    break;
+                }
+                "f3" => {
+                    platform::send_reload_keys(hwnd, 0x72, 0x72);
+                    break;
+                }
+                _ => {
+                    // The launcher's own choice: real click when captured.
+                    platform::click_game(hwnd, what == "rmb");
+                }
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+
+    #[test]
+    fn reads_reload_keys_from_options() {
+        assert_eq!(parse_reload_keys(""), ReloadKeys::default());
+        let o = parse_reload_keys(
+            "pauseOnLostFocus:false\nkey_key.debug.modifier:key.keyboard.f4\nkey_key.debug.reloadResourcePacks:key.keyboard.r\n",
+        );
+        assert_eq!((o.modifier, o.key), (0x73, 0x52));
         // Unsupported binding (a mouse button) → keep the default key.
-        let o = parse_game_options("pauseOnLostFocus:true
-key_key.debug.reloadResourcePacks:key.mouse.left
-");
-        assert!(o.pause_on_lost_focus);
-        assert_eq!(o.reload_key, 0x54);
+        let o = parse_reload_keys("key_key.debug.reloadResourcePacks:key.mouse.left\n");
+        assert_eq!(o.key, 0x54);
         assert_eq!(mc_key_vk("key.keyboard.7"), Some(0x37));
         assert_eq!(mc_key_vk("key.keyboard.f12"), Some(0x7B));
         assert_eq!(mc_key_vk("key.keyboard.left.shift"), None);

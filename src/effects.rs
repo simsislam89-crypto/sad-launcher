@@ -540,19 +540,40 @@ fn find_function(src: &str, ret: &str, name: &str) -> Option<(usize, Vec<String>
     Some((at, names))
 }
 
-/// Renames `ret name(` to `ret sad_orig_name(` and appends `wrapper`
-/// (which calls the original under the new name). None when not found.
+/// Renames `ret name(` to `ret sad_orig_name(` and puts `wrapper` (which
+/// calls the original under the new name) RIGHT AFTER the original's body:
+/// GLSL needs a function declared before use, and in 26.x the same file
+/// calls it further down (`total_fog_value` → `linear_fog_value`); it also
+/// stays inside the `#ifndef` include guard. None when not found.
 fn wrap_function(src: &str, ret: &str, name: &str, wrapper: impl Fn(&[String], &str) -> String) -> Option<String> {
     let (at, params) = find_function(src, ret, name)?;
     let orig = format!("sad_orig_{name}");
     let sig_end = at + src[at..].find('(')?;
     let close = sig_end + src[sig_end..].find(')')?;
     let params_text = &src[sig_end + 1..close];
+    let body_open = close + src[close..].find('{')?;
+    let mut depth = 0usize;
+    let mut body_end = None;
+    for (i, ch) in src[body_open..].char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    body_end = Some(body_open + i + 1);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body_end = body_end?;
     let mut out = String::with_capacity(src.len() + 400);
     out.push_str(&src[..at]);
     out.push_str(&format!("{ret} {orig}"));
-    out.push_str(&src[at + ret.len() + 1 + name.len()..]);
-    out.push_str(&format!("\n\n// Sad Launcher\n{ret} {name}({params_text}) {{\n    {}\n}}\n", wrapper(&params, &orig)));
+    out.push_str(&src[at + ret.len() + 1 + name.len()..body_end]);
+    out.push_str(&format!("\n\n// Sad Launcher\n{ret} {name}({params_text}) {{\n    {}\n}}", wrapper(&params, &orig)));
+    out.push_str(&src[body_end..]);
     Some(out)
 }
 
@@ -939,23 +960,18 @@ pub fn patch_options_text(existing: &str, cfg: &EffectsConfig) -> String {
     if !found_packs && want_pack {
         lines.push(format!("resourcePacks:[\"vanilla\",\"{PACK_ENTRY}\"]"));
     }
-    // Safety net: a pack listed here stays on even if the game finds its
-    // format wrong (as after «enable anyway» in the pack screen). A game
-    // that finds it compatible removes it from this list by itself.
-    let mut found_incompat = false;
+    // Never in the «incompatible» list: a pack that is listed there and is
+    // compatible again gets dropped from the list AND skipped for that
+    // start (seen live on 26.3) — 0.7.8 put it there, take it out.
     for line in &mut lines {
         if let Some(raw) = line.strip_prefix("incompatibleResourcePacks:") {
-            found_incompat = true;
             let mut list: Vec<String> = serde_json::from_str(raw.trim()).unwrap_or_default();
-            if !list.iter().any(|x| x == PACK_ENTRY) {
-                list.push(PACK_ENTRY.into());
-                *line = format!("incompatibleResourcePacks:{}", serde_json::to_string(&list).unwrap_or_default());
+            if list.iter().any(|x| x == PACK_ENTRY) {
+                list.retain(|x| x != PACK_ENTRY);
+                *line = format!("incompatibleResourcePacks:{}", serde_json::to_string(&list).unwrap_or_else(|_| "[]".into()));
             }
             break;
         }
-    }
-    if !found_incompat {
-        lines.push(format!("incompatibleResourcePacks:[\"{PACK_ENTRY}\"]"));
     }
 
     let mut out = lines.join("\n");
@@ -1037,13 +1053,16 @@ mod tests {
     }
 
     #[test]
-    fn options_keep_pack_even_if_game_calls_it_incompatible() {
+    fn pack_is_taken_out_of_incompatible_list() {
         let cfg = EffectsConfig::default();
-        let out = patch_options_text("resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n", &cfg);
-        assert!(out.contains("incompatibleResourcePacks:[\"file/SadEffects\"]"));
+        let out = patch_options_text(
+            "resourcePacks:[\"vanilla\",\"file/SadEffects\"]\nincompatibleResourcePacks:[\"file/Old.zip\",\"file/SadEffects\"]\n",
+            &cfg,
+        );
+        assert!(out.contains("incompatibleResourcePacks:[\"file/Old.zip\"]"));
+        assert!(out.contains("resourcePacks:[\"vanilla\",\"file/SadEffects\"]"));
         assert_eq!(patch_options_text(&out, &cfg), out, "second apply changes nothing");
-        let fresh = patch_options_text("fov:70.0\n", &cfg);
-        assert!(fresh.contains("incompatibleResourcePacks:[\"file/SadEffects\"]"));
+        assert!(!patch_options_text("fov:70.0\n", &cfg).contains("incompatibleResourcePacks"));
     }
 
     const LIGHT_26: &str = "#ifndef MINECRAFT_SAMPLE_LIGHTMAP_GLSL\n#define MINECRAFT_SAMPLE_LIGHTMAP_GLSL\n\nvec4 sample_lightmap(sampler2D lightMap, ivec2 uv) {\n    return texture(lightMap, clamp((uv / 256.0) + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));\n}\n\n#endif\n";
@@ -1057,6 +1076,10 @@ mod tests {
         let off = patch_fog_glsl(FOG_26, true, 1.0).unwrap();
         assert!(off.contains("float linear_fog_value(float vertexDistance, float fogStart, float fogEnd) {\n    return 0.0;"));
         assert!(off.contains("float total_fog_value("), "rest of fog.glsl kept");
+        // Declared before its caller in the same file (live 26.3: «no
+        // matching overloaded function» when appended at the end).
+        assert!(off.find("float linear_fog_value(").unwrap() < off.find("float total_fog_value(").unwrap());
+        assert!(light.find("vec4 sample_lightmap(").unwrap() < light.find("#endif").unwrap(), "inside the include guard");
         let far = patch_fog_glsl(FOG_26, false, 4.0).unwrap();
         assert!(far.contains("return sad_orig_linear_fog_value(vertexDistance, fogStart * 4.00, fogEnd * 4.00);"));
     }
@@ -1200,5 +1223,248 @@ mod tests {
         assert_eq!(loaded.anti_afk_secs, 60);
         assert_eq!(loaded.autoclicker_bind, "F6");
         assert_eq!(loaded.anti_afk_bind, "F7");
+    }
+
+    /// Live: a real Minecraft in a singleplayer world. Checks that the
+    /// effects pack is on after start, that switching effects reloads the
+    /// running game (window NOT focused, pause menu open — like when the
+    /// player is in the launcher) without shader errors, and that the
+    /// autoclicker clicks the game window: the real cursor parked on the
+    /// window's × must not close the game.
+    /// `cargo test --bin sad-launcher live_effects_in_game -- --ignored --nocapture`
+    /// (`MADRID_LIVE_MC=26.3`, `MADRID_DEV_WORLD=SadTest` by default)
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn live_effects_in_game() {
+        use std::time::{Duration, Instant};
+        type H = *mut std::ffi::c_void;
+        #[allow(clashing_extern_declarations)]
+        #[link(name = "user32")]
+        extern "system" {
+            fn FindWindowW(class: *const u16, title: *const u16) -> H;
+            fn SetForegroundWindow(h: H) -> i32;
+            fn GetForegroundWindow() -> H;
+            fn keybd_event(vk: u8, scan: u8, flags: u32, extra: usize);
+            fn GetWindowRect(h: H, r: *mut [i32; 4]) -> i32;
+            fn SetCursorPos(x: i32, y: i32) -> i32;
+            fn GetCursorPos(p: *mut [i32; 2]) -> i32;
+            fn PostMessageW(h: H, msg: u32, w: usize, l: isize) -> i32;
+            fn MapVirtualKeyW(code: u32, kind: u32) -> u32;
+            fn IsWindow(h: H) -> i32;
+        }
+        let post_key = |h: H, vk: u16| unsafe {
+            let sc = (MapVirtualKeyW(vk as u32, 0) as isize) << 16;
+            PostMessageW(h, 0x0100, vk as usize, 1 | sc);
+            PostMessageW(h, 0x0101, vk as usize, 1 | sc | (3 << 30));
+        };
+
+        let mc = std::env::var("MADRID_LIVE_MC").unwrap_or_else(|_| "26.3".into());
+        if std::env::var("MADRID_DEV_WORLD").is_err() {
+            std::env::set_var("MADRID_DEV_WORLD", "SadTest");
+        }
+        let mut cfg = crate::config::load();
+        cfg.active_profile = "default".into();
+        let instance = cfg.instance_dir();
+        let options_path = instance.join("options.txt");
+        let saved_options = std::fs::read_to_string(&options_path).ok();
+        let jar = client_jar(&cfg, &mc).expect("client jar of this version is installed");
+        let shared = crate::app::new_shared(cfg.clone());
+        let log = |n: usize| shared.game_log_tail(n);
+        let shader_error = |l: &str| {
+            let low = l.to_ascii_lowercase();
+            low.contains("shadercompileexception")
+                || ((low.contains("/error") || low.contains("/warn"))
+                    && (low.contains("shader") || low.contains("glsl") || low.contains("pipeline") || low.contains("sadeffects")))
+        };
+        let reloads = |lines: &[String]| lines.iter().filter(|l| l.contains("Reloading ResourceManager")).count();
+
+        crate::launch::launch(&shared, &cfg, &mc, None).expect("launch");
+        let t = Instant::now();
+        let mut in_world = false;
+        while t.elapsed() < Duration::from_secs(240) && shared.is_game_running() {
+            std::thread::sleep(Duration::from_millis(500));
+            if log(600).iter().any(|l| l.contains("logged in with entity id")) {
+                in_world = true;
+                break;
+            }
+        }
+        let finish = |shared: &std::sync::Arc<crate::shared::Shared>| {
+            crate::launch::stop(shared);
+            std::thread::sleep(Duration::from_secs(2));
+            if let Some(o) = &saved_options {
+                let _ = std::fs::write(&options_path, o);
+            }
+            let _ = apply_to_instance(&instance, &mc, &load(), Some(&jar));
+        };
+        let boot = log(600);
+        if !in_world {
+            println!("{}", boot.iter().rev().take(40).rev().cloned().collect::<Vec<_>>().join("\n"));
+            finish(&shared);
+            panic!("the game did not reach the world in {:?}", t.elapsed());
+        }
+        println!("в мире через {:?}", t.elapsed());
+        let removed = boot.iter().any(|l| l.contains("Removed resource pack file/SadEffects"));
+        let loaded = boot.iter().any(|l| l.contains("Reloading ResourceManager") && l.contains("file/SadEffects"));
+        let boot_errors = boot.iter().filter(|l| shader_error(l)).count();
+        println!("пак при старте: включён={loaded}, выкинут={removed}, ошибок шейдеров={boot_errors}");
+
+        std::thread::sleep(Duration::from_secs(4));
+        let pid = shared.game_pid();
+        let hwnd_n = crate::automation::game_window(pid).expect("game window");
+        let hwnd = hwnd_n as H;
+        let captured = || crate::automation::game_cursor_captured(hwnd_n);
+        let tray: Vec<u16> = "Shell_TrayWnd\0".encode_utf16().collect();
+        // The player goes to the launcher: the game loses focus (and opens
+        // its pause menu ~0.5 s later).
+        let leave_game = || {
+            unsafe {
+                let taskbar = FindWindowW(tray.as_ptr(), std::ptr::null());
+                keybd_event(0x12, 0, 0, 0); // Alt lets SetForegroundWindow through
+                SetForegroundWindow(taskbar);
+                keybd_event(0x12, 0, 2, 0);
+            }
+            std::thread::sleep(Duration::from_secs(2));
+            let fg = unsafe { GetForegroundWindow() };
+            fg != hwnd
+        };
+        // The player comes back and closes the pause menu (Esc) — until the
+        // game holds the cursor again. Never a click: the middle of the
+        // pause menu is «Save and quit».
+        let back_to_world = || {
+            unsafe {
+                keybd_event(0x12, 0, 0, 0);
+                SetForegroundWindow(hwnd);
+                keybd_event(0x12, 0, 2, 0);
+            }
+            std::thread::sleep(Duration::from_millis(800));
+            for _ in 0..3 {
+                if captured() {
+                    break;
+                }
+                post_key(hwnd, 0x1B);
+                std::thread::sleep(Duration::from_millis(800));
+            }
+            captured()
+        };
+
+        let mut ac = load();
+        ac.autoclicker = false;
+        ac.autoclicker_ms = 50;
+        ac.autoclicker_rmb = false;
+        ac.autoclicker_bind = String::new();
+        ac.anti_afk = false;
+        ac.anti_afk_bind = String::new();
+        let handle = crate::automation::AutomationHandle::start(shared.clone(), egui::Context::default(), &ac);
+
+        let mut steps = Vec::new();
+        let mut c = EffectsConfig::default();
+        c.fullbright = true;
+        c.fullbright_gamma = 15.0;
+        steps.push(("яркость", c.clone()));
+        c.custom_fog = true;
+        c.fog_disable = true;
+        steps.push(("яркость + без тумана", c.clone()));
+        c.fullbright = false;
+        c.custom_fog = false;
+        c.no_fire = true;
+        steps.push(("всё выкл, низкий огонь", c.clone()));
+        let mut results = Vec::new();
+        for (name, step) in &steps {
+            let unfocused = leave_game();
+            let before = log(600);
+            let n0 = reloads(&before);
+            let rep = apply_to_instance(&instance, &mc, step, Some(&jar)).expect("apply");
+            handle.request_reload(&instance);
+            std::thread::sleep(Duration::from_secs(2));
+            let waited = reloads(&log(600)) == n0 && handle.snapshot().reload_pending;
+            let back = back_to_world();
+            let t = Instant::now();
+            let mut ok = false;
+            while t.elapsed() < Duration::from_secs(20) {
+                std::thread::sleep(Duration::from_millis(300));
+                let now = log(600);
+                if reloads(&now) > n0 {
+                    ok = now.iter().rev().any(|l| l.contains("Reloading ResourceManager") && l.contains("file/SadEffects"));
+                    // Let shaders compile before looking for errors.
+                    std::thread::sleep(Duration::from_secs(3));
+                    break;
+                }
+            }
+            let now = log(600);
+            let errors: Vec<&String> = now.iter().filter(|l| !before.contains(l) && shader_error(l)).collect();
+            println!(
+                "{name}: пак записан={}, игра не в фокусе={unfocused}, F3+T ждал возвращения={waited}, вернулся в мир={back}, перезагрузка={ok}, ошибок шейдеров={}",
+                rep.pack_written,
+                errors.len()
+            );
+            for e in &errors {
+                println!("    {e}");
+            }
+            results.push((unfocused && waited && ok && errors.is_empty(), name.to_string()));
+        }
+
+        // Autoclicker in the world (captured cursor → real clicks, inside
+        // the game window only).
+        let in_world = back_to_world();
+        ac.autoclicker = true;
+        handle.update_from_config(&ac);
+        std::thread::sleep(Duration::from_secs(3));
+        let snap_world = handle.snapshot();
+        // Inventory open → the cursor is free; park the REAL cursor on the
+        // window's ×: clicks must go to the game, not close it.
+        post_key(hwnd, 0x45); // E
+        std::thread::sleep(Duration::from_millis(800));
+        let free = !captured();
+        let mut cur = [0i32; 2];
+        let mut r = [0i32; 4];
+        unsafe {
+            GetCursorPos(&mut cur);
+            GetWindowRect(hwnd, &mut r);
+            SetCursorPos(r[2] - 22, r[1] + 12);
+        }
+        std::thread::sleep(Duration::from_millis(2500));
+        let snap_inv = handle.snapshot();
+        ac.autoclicker = false;
+        handle.update_from_config(&ac);
+        unsafe { SetCursorPos(cur[0], cur[1]) };
+        std::thread::sleep(Duration::from_millis(300));
+        post_key(hwnd, 0x1B);
+        std::thread::sleep(Duration::from_secs(1));
+        drop(handle);
+        let alive = shared.is_game_running() && unsafe { IsWindow(hwnd) } != 0;
+        println!(
+            "автокликер: в мире (курсор захвачен={in_world}) кликов={}, в инвентаре (курсор свободен={free}) с курсором на × кликов={}, игра жива={alive}",
+            snap_world.click_count,
+            snap_inv.click_count - snap_world.click_count
+        );
+
+        finish(&shared);
+        assert!(loaded && !removed, "пак эффектов должен быть включён при старте");
+        assert_eq!(boot_errors, 0, "шейдеры пака не собрались при старте");
+        for (ok, name) in &results {
+            assert!(ok, "эффект «{name}» не применился в запущенной игре");
+        }
+        assert!(in_world && snap_world.click_count >= 30, "автокликер почти не кликал в мире");
+        assert!(free && snap_inv.click_count > snap_world.click_count + 20, "автокликер не кликал в инвентаре");
+        assert!(alive, "игра закрылась во время автокликера");
+    }
+
+    /// Live helper: starts the game (as «Играть» does) and keeps it until
+    /// it is closed, for checks by hand. `MADRID_DEV_WORLD` opens a world.
+    /// `cargo test --bin sad-launcher live_game_hold -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_game_hold() {
+        let mc = std::env::var("MADRID_LIVE_MC").unwrap_or_else(|_| "26.3".into());
+        let mut cfg = crate::config::load();
+        cfg.active_profile = "default".into();
+        let shared = crate::app::new_shared(cfg.clone());
+        crate::launch::launch(&shared, &cfg, &mc, None).expect("launch");
+        let t = std::time::Instant::now();
+        while shared.is_game_running() && t.elapsed() < std::time::Duration::from_secs(1200) {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        crate::launch::stop(&shared);
     }
 }

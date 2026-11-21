@@ -764,6 +764,7 @@ pub struct Launcher {
     pub automation: crate::automation::AutomationHandle,
     pub auto_snap: crate::automation::AutomationSnapshot,
     auto_seen_toggle_seq: u64,
+    auto_seen_reload_seq: u64,
     pub bind_capture: Option<crate::automation::BindTarget>,
     // first-run nickname screen
     pub nick_buf: String,
@@ -1336,6 +1337,7 @@ impl Launcher {
             automation,
             auto_snap,
             auto_seen_toggle_seq: 0,
+            auto_seen_reload_seq: 0,
             bind_capture: None,
             nick_buf: String::new(),
             build_selected_id: String::new(),
@@ -2080,13 +2082,15 @@ impl Launcher {
         let jar = crate::effects::client_jar(&self.cfg, &spec.mc);
         match crate::effects::apply_to_instance(&instance, &spec.mc, &self.effects, jar.as_deref()) {
             Ok(rep) => {
-                // Live: the running game reloads the pack right away (F3+T
-                // sent by the launcher) — no restart, no key press.
-                let reloaded = rep.pack_written && mc_running && crate::automation::reload_game_resources(self.shared.game_pid(), &instance);
-                let msg = match (rep.pack_written, reloaded, mc_running, rep.options_updated) {
-                    (true, true, _, _) => "Применено в игре · ресурсы перезагружены",
-                    (true, false, true, _) => "Пак обновлён · окно игры не найдено — нажми F3+T в игре",
-                    (true, false, false, _) => "Применено · включится при запуске игры",
+                // Live: the running game reloads the pack (F3+T sent by the
+                // launcher) the moment the player is back in it.
+                let queued = rep.pack_written && mc_running;
+                if queued {
+                    self.automation.request_reload(&instance);
+                }
+                let msg = match (rep.pack_written, queued, mc_running, rep.options_updated) {
+                    (true, true, _, _) => "Пак обновлён · включится, как только вернёшься в игру",
+                    (true, false, _, _) => "Применено · включится при запуске игры",
                     (false, _, true, true) => "Гамма, тряска камеры и частицы — после перезапуска игры",
                     (false, _, false, true) => "Применено к options.txt",
                     (false, _, _, false) => "Всё уже применено",
@@ -2904,8 +2908,11 @@ impl Launcher {
         }
 
         // Automation hotkey / live Minecraft status sync
-        self.automation.set_instance(&self.cfg.instance_dir());
         self.auto_snap = self.automation.snapshot();
+        if self.auto_snap.reload_seq != self.auto_seen_reload_seq {
+            self.auto_seen_reload_seq = self.auto_snap.reload_seq;
+            self.effects_status = Some((true, "Применено в игре · ресурсы перезагружены".into()));
+        }
         if self.auto_snap.toggle_seq != self.auto_seen_toggle_seq {
             self.auto_seen_toggle_seq = self.auto_snap.toggle_seq;
             let mut changed = false;
