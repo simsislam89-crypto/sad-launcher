@@ -7,6 +7,7 @@ pub mod play;
 pub mod server;
 pub mod settings;
 pub mod versions;
+pub mod viewer;
 
 use crate::icons::{self, Icon};
 use crate::theme::{self, Skin};

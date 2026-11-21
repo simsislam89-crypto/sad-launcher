@@ -1,6 +1,6 @@
 [package]
 name = "sad-launcher"
-version = "0.7.4"
+version = "0.7.5"
 edition = "2021"
 description = "Sad Launcher — a black-and-white Minecraft launcher for Windows that hosts its own Forge server."
 
@@ -20,7 +20,7 @@ egui = "0.37"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "time", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.13", features = ["json", "stream", "gzip", "brotli", "zstd"] }
+reqwest = { version = "0.13", features = ["json", "form", "stream", "gzip", "brotli", "zstd"] }
 futures-util = "0.3"
 anyhow = "1"
 dirs = "6"
@@ -32,6 +32,11 @@ rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 flate2 = "1"
 
+# YouTube in the launcher: the official embed player in a WebView2 child
+# window (system Edge engine, hardware decoding). Windows only.
+[target.'cfg(windows)'.dependencies]
+wry = { version = "0.57", default-features = false }
+
 # Linux needs an explicit window backend (Windows/macOS have one built in).
 # wayland links libwayland via dlopen, so no -dev packages are needed at build time.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
@@ -40,3 +45,7 @@ eframe = { version = "0.37", default-features = false, features = ["glow", "defa
 # Local time, malloc_trim — already in the dependency tree via tokio.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# WebView2 loader is loaded at run time on the GNU toolchain (see vendor/).
+[patch.crates-io]
+webview2-com-sys = { path = "vendor/webview2-com-sys" }

@@ -31,6 +31,8 @@ mod util;
 mod views;
 mod widgets;
 mod win;
+mod video;
+mod translate;
 
 fn main() {
     // MADRID_SECOND_INSTANCE=1 lets a developer run a build next to the

@@ -248,6 +248,23 @@ pub fn drawable_text(ctx: &egui::Context, text: &str) -> String {
     out
 }
 
+/// A description translation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Translation {
+    Working,
+    /// Text, and whether glyph-less characters were already stripped.
+    Done(String, bool),
+    Failed(String),
+}
+
+/// The video in the viewer: starting, playing, or why it cannot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VideoState {
+    Loading,
+    Playing,
+    Error(String),
+}
+
 /// Whether an installed pack build is the newest version of the pack.
 #[derive(Clone)]
 pub enum PackCheck {
@@ -695,6 +712,23 @@ pub struct Launcher {
     /// Newest version of each installed pack build, asked live from its
     /// source (profile id → state); filled in the background.
     pub pack_checks: Arc<std::sync::Mutex<HashMap<String, PackCheck>>>,
+    /// «Перевести на русский»: translations of descriptions by project key
+    /// (`source:id`), filled in the background.
+    pub translations: Arc<std::sync::Mutex<HashMap<String, Translation>>>,
+    /// Projects whose card shows the translation instead of the original.
+    pub show_translated: HashSet<String>,
+    /// Telegram-style media viewer over the whole window.
+    pub viewer: Option<crate::views::viewer::Viewer>,
+    /// Player state of the video shown in the viewer.
+    pub video_state: Option<VideoState>,
+    /// This frame's request: play this id over this rect (points).
+    pub video_request: Option<(String, Rect)>,
+    /// The YouTube player window (WebView2), alive while a card with videos
+    /// or the viewer is open.
+    #[cfg(windows)]
+    pub video: Option<crate::video::VideoView>,
+    /// WebView2 could not start: videos open in the browser instead.
+    pub video_unavailable: Option<String>,
     pub public_ip_cached: Option<String>,
     pub public_ip_fetching: bool,
     pub friend_code: String,
@@ -1264,6 +1298,14 @@ impl Launcher {
             detail_body: None,
             detail_rx: None,
             pack_checks: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            translations: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            show_translated: HashSet::new(),
+            viewer: None,
+            video_state: None,
+            video_request: None,
+            #[cfg(windows)]
+            video: None,
+            video_unavailable: None,
             public_ip_cached: None,
             public_ip_fetching: false,
             friend_code: String::new(),
@@ -1765,6 +1807,132 @@ impl Launcher {
         if self.search.cache.len() > 120 {
             self.search.cache.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
         }
+    }
+
+    /// Keeps the YouTube player window in step with the UI: created hidden
+    /// as soon as a card with videos opens (the first video already loads,
+    /// so a click plays at once), placed over the viewer's media rect while
+    /// a video is shown, hidden otherwise, dropped when neither the card nor
+    /// the viewer needs it (it holds ~100 МБ).
+    fn sync_video(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        let request = self.video_request.take();
+        #[cfg(windows)]
+        {
+            let card_videos: Vec<String> = match (&self.detail, &self.detail_body) {
+                (Some(_), Some(Ok(d))) => d.videos.clone(),
+                _ => Vec::new(),
+            };
+            let wanted = request.as_ref().map(|(id, _)| id.clone()).or_else(|| card_videos.first().cloned());
+            let Some(first) = wanted else {
+                self.video = None;
+                return;
+            };
+            if self.video.is_none() && self.video_unavailable.is_none() {
+                match crate::video::VideoView::new(frame, &first) {
+                    Ok(v) => self.video = Some(v),
+                    Err(e) => {
+                        self.shared.log(crate::shared::LogKind::Warn, format!("Видео в лаунчере: {e:#}"));
+                        self.video_unavailable = Some(format!("{e:#}"));
+                    }
+                }
+            }
+            if let Some(err) = &self.video_unavailable {
+                if request.is_some() && self.video_state.is_none() {
+                    self.video_state = Some(VideoState::Error(format!("Встроенный плеер недоступен ({err}) — открой на YouTube")));
+                }
+                return;
+            }
+            let Some(video) = self.video.as_mut() else {
+                return;
+            };
+            for ev in video.take_events() {
+                use crate::video::PlayerEvent;
+                match ev {
+                    PlayerEvent::Playing => {
+                        if self.video_state != Some(VideoState::Playing) {
+                            self.shared.log(crate::shared::LogKind::Info, format!("Видео {} играет в лаунчере", video.current));
+                        }
+                        self.video_state = Some(VideoState::Playing);
+                    }
+                    PlayerEvent::Error(code) => {
+                        self.shared.log(crate::shared::LogKind::Warn, format!("Видео {}: ошибка плеера {code}", video.current));
+                        if request.is_some() {
+                            self.video_state = Some(VideoState::Error(crate::video::error_text(code).to_string()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            match request {
+                Some((id, rect)) => {
+                    let ppp = ctx.pixels_per_point();
+                    video.place((
+                        (rect.left() * ppp).round() as i32,
+                        (rect.top() * ppp).round() as i32,
+                        (rect.width() * ppp).round() as u32,
+                        (rect.height() * ppp).round() as u32,
+                    ));
+                    if self.video_state.is_none() {
+                        self.video_state = Some(VideoState::Loading);
+                        video.play(&id);
+                    }
+                    video.show(true);
+                }
+                None => video.show(false),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (ctx, frame);
+            // No embedded player here: the viewer opens the video page.
+            if let Some((id, _)) = request {
+                if self.video_state.is_none() {
+                    self.video_state = Some(VideoState::Error("Видео откроется на YouTube".into()));
+                    let _ = open::that_detached(format!("https://www.youtube.com/watch?v={id}"));
+                }
+            }
+        }
+    }
+
+    /// Starts translating a description (once per project and session).
+    pub fn translate_description(&mut self, key: &str, text: &str) {
+        let Ok(mut map) = self.translations.lock() else {
+            return;
+        };
+        if matches!(map.get(key), Some(Translation::Working | Translation::Done(..))) {
+            self.show_translated.insert(key.to_string());
+            return;
+        }
+        map.insert(key.to_string(), Translation::Working);
+        drop(map);
+        self.show_translated.insert(key.to_string());
+        let (key, text, store, ctx) = (key.to_string(), text.to_string(), self.translations.clone(), self.ctx.clone());
+        net::spawn(async move {
+            let state = match crate::translate::to_russian(&net::client(), &text).await {
+                Ok(t) => Translation::Done(t, false),
+                Err(e) => Translation::Failed(format!("{e:#}")),
+            };
+            if let Ok(mut map) = store.lock() {
+                map.insert(key, state);
+            }
+            if let Some(ctx) = ctx {
+                ctx.request_repaint();
+            }
+        });
+    }
+
+    /// Current translation of a description; strips undrawable characters
+    /// once, the first time the finished text is read.
+    pub fn translation(&mut self, ctx: &egui::Context, key: &str) -> Option<Translation> {
+        let mut map = self.translations.lock().ok()?;
+        let entry = map.get_mut(key)?;
+        if let Translation::Done(text, cleaned) = entry {
+            if !*cleaned {
+                *text = drawable_text(ctx, text);
+                *cleaned = true;
+            }
+        }
+        Some(entry.clone())
     }
 
     /// State of the «is this pack build current?» check; starts it once.
@@ -2379,6 +2547,18 @@ impl Launcher {
             {
                 let hit = self.search.results[0].clone();
                 self.open_detail(hit);
+            }
+            // `MADRID_DEV_VIDEO=1`: then plays the card's first video in the viewer.
+            static PLAYED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+            if let (Some(hit), Some(Ok(d))) = (&self.detail, &self.detail_body) {
+                if !d.videos.is_empty()
+                    && std::env::var_os("MADRID_DEV_VIDEO").is_some()
+                    && !PLAYED.swap(true, Ordering::Relaxed)
+                {
+                    let items = d.videos.iter().map(|v| crate::views::viewer::Media::Video(v.clone())).collect();
+                    let title = hit.title.clone();
+                    self.open_viewer(items, 0, &title);
+                }
             }
         }
         if self.search.busy {
@@ -4087,6 +4267,15 @@ impl Launcher {
         if self.bind_capture.is_some() {
             return;
         }
+        // The viewer owns Esc and the arrows while it is open; the mouse
+        // «back» button closes it.
+        if self.viewer.is_some() {
+            if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Extra1)) {
+                self.viewer = None;
+                self.video_state = None;
+            }
+            return;
+        }
         let (back_mouse, fwd_mouse, alt_left, alt_right, esc) = ctx.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Extra1),
@@ -4359,10 +4548,11 @@ impl eframe::App for Launcher {
         [0.0, 0.0, 0.0, 0.0]
     }
 
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         let bench_at = bench::frame_start(&ctx);
         self.ui_frame(ui, &ctx);
+        self.sync_video(&ctx, frame);
         bench::frame_end(&ctx, bench_at);
         bench::screenshot(&ctx);
     }
@@ -4567,6 +4757,7 @@ impl Launcher {
         self.draw_remove_card(&ctx, &skin);
         self.draw_update_banner(&ctx, &skin);
         self.draw_about(&ctx, &skin);
+        self.draw_viewer(&ctx, &skin);
         self.draw_middle_scroll_anchor(&ctx, &skin);
         self.draw_toasts(&ctx, &skin);
         self.resize_edges(ui);

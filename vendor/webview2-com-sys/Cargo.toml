@@ -1,0 +1,31 @@
+# Vendored webview2-com-sys 0.39.1 (MIT, github.com/wravery/webview2-rs).
+# Only change: on the GNU toolchain the WebView2 loader is NOT linked at
+# build time (that put WebView2Loader.dll into the exe's import table, so
+# the launcher would not even start without the DLL). Microsoft's loader
+# is embedded instead and loaded on first use — see src/lib.rs.
+[package]
+edition = "2021"
+name = "webview2-com-sys"
+version = "0.39.1"
+license = "MIT"
+description = "WebView2 COM bindings (vendored for Sad Launcher: runtime-loaded loader on GNU)"
+build = "build.rs"
+
+[lib]
+name = "webview2_com_sys"
+path = "src/lib.rs"
+
+[dependencies.windows]
+version = "0.62"
+features = [
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[dependencies.windows-core]
+version = "0.62"

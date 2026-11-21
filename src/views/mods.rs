@@ -4,6 +4,7 @@ use super::{downloads_label, search_field, short_date, truncate};
 use crate::app::Launcher;
 use crate::icons::Icon;
 use crate::mods::{self, ModHit};
+use crate::views::viewer::Media;
 use crate::theme::{self, Skin};
 use crate::widgets::{self, Btn};
 use egui::{Align, Align2, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
@@ -1025,15 +1026,22 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                     ui.label(RichText::new("Описание можно открыть на сайте проекта.").font(theme::body(11.0)).color(skin.faint()));
                 }
                 Some(Ok(d)) => {
-                    draw_videos(app, ui, skin, &ctx, &hit, &d.videos);
+                    let media: Vec<Media> = d
+                        .videos
+                        .iter()
+                        .map(|v| Media::Video(v.clone()))
+                        .chain(d.gallery.iter().map(|g| Media::Image(g.clone())))
+                        .collect();
+                    let mut open_at: Option<usize> = draw_videos(app, ui, skin, &ctx, &hit, &d.videos);
                     if !d.gallery.is_empty() {
                         egui::ScrollArea::horizontal()
                             .id_salt("mod-gallery")
                             .max_height(150.0)
                             .show(ui, |ui| {
+                                wheel_scrolls_sideways(ui);
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 10.0;
-                                    for url in &d.gallery {
+                                    for (gi, url) in d.gallery.iter().enumerate() {
                                         let (r, resp) = ui.allocate_exact_size(Vec2::new(240.0, 135.0), Sense::click());
                                         let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
                                         ui.painter().rect_filled(r, CornerRadius::same(10), skin.fill());
@@ -1054,15 +1062,23 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                                             Stroke::new(1.0, theme::lerp_color(skin.line_soft(), skin.fill_strong(), hover)),
                                             egui::StrokeKind::Inside,
                                         );
-                                        if resp.clicked() {
-                                            let _ = open::that_detached(url);
+                                        if resp.hovered() {
+                                            ui.ctx().set_cursor_icon(egui::CursorIcon::ZoomIn);
+                                        }
+                                        if resp.on_hover_text("Открыть крупно").clicked() {
+                                            open_at = Some(d.videos.len() + gi);
                                         }
                                     }
                                 });
                             });
                         ui.add_space(12.0);
                     }
-                    let body = if d.body.is_empty() { d.summary.clone() } else { d.body.clone() };
+                    if let Some(i) = open_at {
+                        app.open_viewer(media, i, &hit.title);
+                    }
+                    let original = if d.body.is_empty() { d.summary.clone() } else { d.body.clone() };
+                    let key = format!("{}:{}", hit.source, hit.id);
+                    let body = draw_translate_bar(app, ui, skin, &ctx, &key, &original);
                     if body.is_empty() {
                         ui.label(RichText::new("У проекта нет описания.").font(theme::body(12.0)).color(skin.faint()));
                     } else {
@@ -1130,7 +1146,8 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
 /// with this pack. A click opens the video in the browser (egui has no
 /// video player, and a built-in one would cost tens of МБ). Without
 /// videos in the description — one button to search YouTube.
-fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context, hit: &ModHit, videos: &[String]) {
+fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context, hit: &ModHit, videos: &[String]) -> Option<usize> {
+    let mut open_at = None;
     widgets::section_label(ui, skin, "ВИДЕО");
     ui.add_space(6.0);
     if videos.is_empty() {
@@ -1146,12 +1163,13 @@ fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context
             ui.label(RichText::new("автор не добавил видео в описание").font(theme::mono(9.0)).color(skin.faint()));
         });
         ui.add_space(12.0);
-        return;
+        return None;
     }
     egui::ScrollArea::horizontal().id_salt("mod-videos").max_height(170.0).show(ui, |ui| {
+        wheel_scrolls_sideways(ui);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            for id in videos {
+            for (vi, id) in videos.iter().enumerate() {
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(240.0, 135.0), Sense::click());
                 let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15);
                 let p = ui.painter();
@@ -1187,13 +1205,90 @@ fn draw_videos(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                 }
-                if resp.on_hover_text("Смотреть на YouTube").clicked() {
-                    let _ = open::that_detached(format!("https://www.youtube.com/watch?v={id}"));
+                if resp.on_hover_text("Смотреть").clicked() {
+                    open_at = Some(vi);
                 }
             }
         });
     });
     ui.add_space(12.0);
+    open_at
+}
+
+/// Most of the description is Cyrillic already — no translate button.
+fn looks_russian(text: &str) -> bool {
+    let (mut letters, mut cyr) = (0usize, 0usize);
+    for c in text.chars().take(4000).filter(|c| c.is_alphabetic()) {
+        letters += 1;
+        if ('\u{400}'..='\u{4ff}').contains(&c) {
+            cyr += 1;
+        }
+    }
+    letters > 0 && cyr * 10 >= letters * 4
+}
+
+/// «Перевести на русский» right above the description (and only there):
+/// a clear filled-outline button; after translating — «Показать оригинал».
+/// Returns the text to show.
+fn draw_translate_bar(app: &mut Launcher, ui: &mut Ui, skin: &Skin, ctx: &egui::Context, key: &str, original: &str) -> String {
+    if original.trim().is_empty() || looks_russian(original) {
+        return original.to_string();
+    }
+    let state = app.translation(ctx, key);
+    let shown = app.show_translated.contains(key);
+    let mut text = original.to_string();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        match (&state, shown) {
+            (Some(crate::app::Translation::Done(t, _)), true) => {
+                text = t.clone();
+                if widgets::button_icon(ui, skin, Icon::Globe, "Показать оригинал", Btn::Outline, true, 32.0, 12.5, 14.0).clicked() {
+                    app.show_translated.remove(key);
+                }
+                ui.label(RichText::new("переведено автоматически · Google").font(theme::mono(9.5)).color(skin.faint()));
+            }
+            (Some(crate::app::Translation::Working), true) => {
+                widgets::button_icon(ui, skin, Icon::Globe, "Перевожу…", Btn::Primary, false, 32.0, 12.5, 14.0);
+                ui.ctx().request_repaint_after(Duration::from_millis(150));
+            }
+            (Some(crate::app::Translation::Failed(e)), true) => {
+                if widgets::button_icon(ui, skin, Icon::Refresh, "Перевести ещё раз", Btn::Primary, true, 32.0, 12.5, 14.0).clicked() {
+                    if let Ok(mut map) = app.translations.lock() {
+                        map.remove(key);
+                    }
+                    app.translate_description(key, original);
+                }
+                ui.label(RichText::new(truncate(e, 80)).font(theme::mono(9.5)).color(skin.red()));
+            }
+            _ => {
+                if widgets::button_icon(ui, skin, Icon::Globe, "Перевести на русский", Btn::Primary, true, 32.0, 12.5, 14.0)
+                    .on_hover_text("Перевести описание автоматически")
+                    .clicked()
+                {
+                    app.translate_description(key, original);
+                }
+            }
+        }
+    });
+    ui.add_space(10.0);
+    text
+}
+
+/// Inside a horizontal strip (videos, screenshots) the mouse wheel moves
+/// the strip sideways instead of scrolling the whole page down: the
+/// vertical wheel delta becomes horizontal while the pointer is over it.
+fn wheel_scrolls_sideways(ui: &mut Ui) {
+    let viewport = ui.clip_rect();
+    if !ui.rect_contains_pointer(viewport) {
+        return;
+    }
+    ui.input_mut(|i| {
+        let dy = i.smooth_scroll_delta.y;
+        if dy != 0.0 {
+            i.smooth_scroll_delta.x += dy;
+            i.smooth_scroll_delta.y = 0.0;
+        }
+    });
 }
 
 /// Percent-encodes a search query for a URL.
