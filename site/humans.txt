@@ -1,0 +1,7 @@
+/* TEAM */
+Основатель: simsislam89-crypto
+GitHub: https://github.com/simsislam89-crypto
+
+/* SITE */
+Проект: Sad Launcher — лаунчер Minecraft на Rust
+Исходный код: https://github.com/simsislam89-crypto/sad-launcher

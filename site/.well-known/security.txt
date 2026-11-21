@@ -1,0 +1,5 @@
+Contact: https://github.com/simsislam89-crypto/sad-launcher/security/advisories/new
+Expires: 2027-11-21T00:00:00.000Z
+Preferred-Languages: ru, en
+Canonical: https://rkt5jy.bot-keep.xyz/.well-known/security.txt
+Policy: https://github.com/simsislam89-crypto/sad-launcher

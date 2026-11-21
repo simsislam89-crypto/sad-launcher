@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /download/SadLauncherSetup.exe
+
+Sitemap: https://rkt5jy.bot-keep.xyz/sitemap.xml
