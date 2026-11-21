@@ -1,6 +1,6 @@
 # RRR.md — полная история проекта Sad Launcher (бывш. LLM Launcher Madrid)
 
-> Файл для мгновенного входа нейросети в контекст. Обновлён: 2026-11-20, версия лаунчера 0.7.3. Протокол задач: /allskill (.claude/skills/allskill), список скиллов: SKILLS.md.
+> Файл для мгновенного входа нейросети в контекст. Обновлён: 2026-11-21, версия лаунчера 0.7.8. Протокол задач: /allskill (.claude/skills/allskill), список скиллов: SKILLS.md.
 > Язык проекта — ТОЛЬКО Rust (требование владельца).
 > Проект: `D:\working WIN\LLM launcher` (Windows 11, Git Bash, Rust toolchain x86_64-pc-windows-gnu).
 
@@ -438,3 +438,16 @@ bash scripts/make-dist.sh                  # launcher + installer в корен�
 - Тесты `test_launcher_host`, `test_v138`, `test_v139` — 36 зелёных; репозиторий 518 файлов, 16,05 МБ, макс. файл 0,7 МБ (лимиты Botkeep соблюдены).
 - «Сертификаты основателя» купить нельзя за пользователя: подпись кода (Azure Trusted Signing, SignPath для open source, Certum) оформляет владелец; она же лечит ложные срабатывания Defender. Для Google «основатель» = разметка Organization + Search Console (подтверждение владения).
 - **GitHub Pages включён** (Settings → Pages → GitHub Actions): https://simsislam89-crypto.github.io/sad-launcher/ — индексируется Google (без noindex). `pages.yml` публикует `site/` при каждом пуше в `site/**`, в копии подменяя адрес bot-keep на адрес Pages (canonical, sitemap). Botkeep-сайт остаётся как был.
+
+## Обновление 2026-11-21 — v0.7.8: эффекты правда меняются в игре (26.x), автокликер кликает в окно, а не курсором
+
+**Почему эффекты не включались в реальном времени (найдено по логу `game-20261121-064914.log`):** `Removed resource pack file/SadEffects from options because it is no longer compatible`. Игра владельца — Minecraft 26.3 (календарные версии), а `pack_format_for_mc("26.3")` проваливался в `_ => 3`, плюс с 1.21.9 (формат 65+) игра читает только `min_format`/`max_format`, а старый `pack_format` + `supported_formats` считает несовместимым и при старте выкидывает пак из options.txt. F3+T перезагружал ресурсы, но уже без пака.
+- Формат пака теперь берётся из самого клиента (`version.json` в jar: `pack_version` числом, `{resource}` или `{resource_major}` — у 26.3 это 97) → `effects::client_pack_format`; таблица — только запасной путь (1.21.5 → 55 … 1.21.11 → 75, 26.x → «любой формат новой схемы»).
+- `effects::pack_mcmeta`: формат ≥ 65 → `{"min_format":N,"max_format":N}` без `pack_format` (так же, как встроенные паки в jar 26.3), старые версии — как раньше.
+- Страховка: `file/SadEffects` добавляется в `incompatibleResourcePacks` — игра оставляет такой пак включённым даже при несовпадении формата (как после «Всё равно включить»), а совместимый сама убирает из этого списка.
+- **Шейдеры 26.x другие:** яркость — `vec4 sample_lightmap(...)` в `include/sample_lightmap.glsl` (в `light.glsl` её больше нет), туман — `float linear_fog_value(...)` в `fog.glsl` (через неё идут все туманы: окружение, дальность, небо, облака). Патч пробует старые имена, потом новые (`LIGHT_SHADERS`), выключенный туман = `return 0.0;`.
+- **F3+T игнорировался при открытом меню паузы.** Байткод `KeyboardHandler` 26.3 (без обфускации) ссылается на `PauseScreen.showsPauseMenu`: debug-клавиши работают только без экрана. А меню паузы открывается само, как только игрок уходит в лаунчер (`pauseOnLostFocus`). Теперь, если игра не в фокусе и пауза включена, перед F3+T в окно уходит Esc (закрывает меню, на следующем кадре игра сама снова его открывает). Все сообщения идут одной пачкой без пауз — GLFW разбирает очередь за один опрос, меню не успевает вернуться. В 26.x клавиши переназначаемые (`key_key.debug.modifier`, `key_key.debug.reloadResourcePacks`) — берутся из options.txt (`automation::parse_game_options`).
+
+**Автокликер кликает в окно игры, а не курсором.** Раньше `SendInput` жал настоящую кнопку мыши там, где курсор: в оконном режиме при открытом инвентаре/меню клик мог попасть на крестик окна и закрыть Minecraft. Теперь `WM_LBUTTONDOWN/UP` (ПКМ — `WM_RBUTTON*`) уходят сообщением прямо в HWND игры (`platform::send_mouse_click(hwnd, rmb)`), в другое окно или на заголовок клик попасть не может. В фоне кликает только в игру, запущенную лаунчером, и только если в её options.txt `pauseOnLostFocus:false` (F3+P): иначе меню паузы поймало бы клики (а там «Отключиться»). Плашка: «Кликает в фоне · кликов: N» / «Пауза: игра не в фокусе · для кликов в фоне нажми в игре F3+P».
+
+**Не проверено в живой игре:** владелец снова был в Roblox — Minecraft и окно лаунчера не запускались (украли бы фокус). Проверено тестами на настоящем jar 26.3 (`real_26_client_pack_and_shaders`: формат 97, оба шейдера патчатся, mcmeta с `min_format`) и 1.20.1. Проверить при следующей игре: в game-*.log не должно быть `Removed resource pack file/SadEffects`, после переключения эффекта — `Reloading ResourceManager: vanilla, file/SadEffects`; автокликер с открытым инвентарём в оконном режиме не трогает рамку окна.

@@ -2082,7 +2082,7 @@ impl Launcher {
             Ok(rep) => {
                 // Live: the running game reloads the pack right away (F3+T
                 // sent by the launcher) — no restart, no key press.
-                let reloaded = rep.pack_written && mc_running && crate::automation::reload_game_resources(self.shared.game_pid());
+                let reloaded = rep.pack_written && mc_running && crate::automation::reload_game_resources(self.shared.game_pid(), &instance);
                 let msg = match (rep.pack_written, reloaded, mc_running, rep.options_updated) {
                     (true, true, _, _) => "Применено в игре · ресурсы перезагружены",
                     (true, false, true, _) => "Пак обновлён · окно игры не найдено — нажми F3+T в игре",
@@ -2904,6 +2904,7 @@ impl Launcher {
         }
 
         // Automation hotkey / live Minecraft status sync
+        self.automation.set_instance(&self.cfg.instance_dir());
         self.auto_snap = self.automation.snapshot();
         if self.auto_snap.toggle_seq != self.auto_seen_toggle_seq {
             self.auto_seen_toggle_seq = self.auto_snap.toggle_seq;

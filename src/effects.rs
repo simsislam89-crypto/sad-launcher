@@ -438,6 +438,14 @@ pub fn pack_format_for_mc(mc: &str) -> u32 {
     let minor = parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(20);
     let patch = parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
     match (major, minor, patch) {
+        // 26.1+ (calendar versions): the exact number comes from the client
+        // jar; without it any format of the new scheme fits (see pack_mcmeta).
+        (m, _, _) if m >= 26 => NEW_PACK_FORMATS,
+        (1, 21, p) if p >= 11 => 75,
+        (1, 21, 9..=10) => 69,
+        (1, 21, 7..=8) => 64,
+        (1, 21, 6) => 63,
+        (1, 21, 5) => 55,
         (1, 21, p) if p >= 4 => 46,
         (1, 21, _) => 34,
         (1, 20, p) if p >= 5 => 32,
@@ -451,6 +459,38 @@ pub fn pack_format_for_mc(mc: &str) -> u32 {
         (1, 15, _) => 5,
         (1, 13..=14, _) => 4,
         _ => 3,
+    }
+}
+
+/// From this resource format on (1.21.9) a pack declares `min_format` /
+/// `max_format`; an old-style `pack_format` makes the game drop the pack
+/// from options.txt as «no longer compatible».
+const NEW_PACK_FORMATS: u32 = 65;
+
+/// The resource pack format of the client itself (`version.json` in the
+/// jar): `"pack_version": 8`, `{"resource": 15}` or `{"resource_major": 97}`.
+pub fn client_pack_format(jar: &Path) -> Option<u32> {
+    let text = jar_text(jar, "version.json")?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let pv = v.get("pack_version")?;
+    let n = pv
+        .as_u64()
+        .or_else(|| pv.get("resource_major").and_then(|x| x.as_u64()))
+        .or_else(|| pv.get("resource").and_then(|x| x.as_u64()))?;
+    u32::try_from(n).ok().filter(|n| *n > 0)
+}
+
+/// `pack.mcmeta` the game with resource format `format` accepts. New
+/// scheme: exactly this format (any minor) — or, when the exact number is
+/// unknown (`format == NEW_PACK_FORMATS`), every format of the new scheme.
+pub fn pack_mcmeta(format: u32) -> String {
+    const DESC: &str = "Sad Launcher: эффекты (меняются из лаунчера прямо в игре)";
+    if format > NEW_PACK_FORMATS {
+        format!("{{\"pack\":{{\"min_format\":{format},\"max_format\":{format},\"description\":\"{DESC}\"}}}}")
+    } else if format == NEW_PACK_FORMATS {
+        format!("{{\"pack\":{{\"min_format\":{format},\"max_format\":9999,\"description\":\"{DESC}\"}}}}")
+    } else {
+        format!("{{\"pack\":{{\"pack_format\":{format},\"supported_formats\":[1,{}],\"description\":\"{DESC}\"}}}}", NEW_PACK_FORMATS - 1)
     }
 }
 
@@ -517,13 +557,23 @@ fn wrap_function(src: &str, ret: &str, name: &str, wrapper: impl Fn(&[String], &
 }
 
 /// Fullbright that works live: the lightmap sample is pulled towards
-/// white by `strength` (0..1). Patched from the game's own `light.glsl`.
+/// white by `strength` (0..1). Patched from the game's own shader:
+/// `minecraft_sample_lightmap` (light.glsl, up to 1.21.x) or
+/// `sample_lightmap` (sample_lightmap.glsl, 26.x).
 pub fn patch_light_glsl(src: &str, strength: f32) -> Option<String> {
     let k = strength.clamp(0.0, 1.0);
-    wrap_function(src, "vec4", "minecraft_sample_lightmap", |p, orig| {
-        format!("return mix({orig}({}), vec4(1.0), {k:.3});", p.join(", "))
+    ["minecraft_sample_lightmap", "sample_lightmap"].iter().find_map(|name| {
+        wrap_function(src, "vec4", name, |p, orig| {
+            format!("return mix({orig}({}), vec4(1.0), {k:.3});", p.join(", "))
+        })
     })
 }
+
+/// Shader includes that hold the lightmap sampler, newest layout last.
+const LIGHT_SHADERS: [&str; 2] = [
+    "assets/minecraft/shaders/include/light.glsl",
+    "assets/minecraft/shaders/include/sample_lightmap.glsl",
+];
 
 /// Fog off (`disable`) or pushed `scale` times farther, live. Covers air,
 /// water and lava fog — the vanilla renderer draws all three through
@@ -543,6 +593,17 @@ pub fn patch_fog_glsl(src: &str, disable: bool, scale: f32) -> Option<String> {
             .collect::<Vec<_>>()
             .join(", ")
     };
+    // 1.21.6+ / 26.x: every fog (environment, render distance, sky,
+    // clouds) is one `linear_fog_value` → 0.0 means no fog.
+    if let Some(out) = wrap_function(src, "float", "linear_fog_value", |p, orig| {
+        if disable {
+            "return 0.0;".to_string()
+        } else {
+            format!("return {orig}({});", scaled_args(p))
+        }
+    }) {
+        return Some(out);
+    }
     let step = wrap_function(src, "vec4", "linear_fog", |p, orig| {
         if disable {
             format!("return {};", p.first().map(|s| s.as_str()).unwrap_or("vec4(0.0)"))
@@ -670,11 +731,10 @@ fn pack_files(mc_version: &str, cfg: &EffectsConfig, client_jar: Option<&Path>) 
         files.retain(|(n, _)| *n != name);
         files.push((name, bytes));
     };
-    let mcmeta = format!(
-        "{{\"pack\":{{\"pack_format\":{},\"supported_formats\":[1,99],\"description\":\"Sad Launcher: эффекты (меняются из лаунчера прямо в игре)\"}}}}",
-        pack_format_for_mc(mc_version)
-    );
-    put(&mut files, "pack.mcmeta".into(), mcmeta.into_bytes());
+    let format = client_jar
+        .and_then(client_pack_format)
+        .unwrap_or_else(|| pack_format_for_mc(mc_version));
+    put(&mut files, "pack.mcmeta".into(), pack_mcmeta(format).into_bytes());
 
     for slug in &cfg.rp_set {
         for (name, bytes) in set_pack_assets(&rp_cached(slug, mc_version)) {
@@ -749,10 +809,11 @@ fn pack_files(mc_version: &str, cfg: &EffectsConfig, client_jar: Option<&Path>) 
     if let Some(jar) = client_jar {
         if cfg.fullbright {
             let strength = ((cfg.fullbright_gamma - 1.0) / 14.0).clamp(0.15, 1.0);
-            if let Some(patched) = jar_text(jar, "assets/minecraft/shaders/include/light.glsl")
-                .and_then(|src| patch_light_glsl(&src, strength))
-            {
-                put(&mut files, "assets/minecraft/shaders/include/light.glsl".into(), patched.into_bytes());
+            for path in LIGHT_SHADERS {
+                if let Some(patched) = jar_text(jar, path).and_then(|src| patch_light_glsl(&src, strength)) {
+                    put(&mut files, path.into(), patched.into_bytes());
+                    break;
+                }
             }
         }
         let fog_off = (cfg.custom_fog && cfg.fog_disable) || cfg.no_fluid;
@@ -878,6 +939,24 @@ pub fn patch_options_text(existing: &str, cfg: &EffectsConfig) -> String {
     if !found_packs && want_pack {
         lines.push(format!("resourcePacks:[\"vanilla\",\"{PACK_ENTRY}\"]"));
     }
+    // Safety net: a pack listed here stays on even if the game finds its
+    // format wrong (as after «enable anyway» in the pack screen). A game
+    // that finds it compatible removes it from this list by itself.
+    let mut found_incompat = false;
+    for line in &mut lines {
+        if let Some(raw) = line.strip_prefix("incompatibleResourcePacks:") {
+            found_incompat = true;
+            let mut list: Vec<String> = serde_json::from_str(raw.trim()).unwrap_or_default();
+            if !list.iter().any(|x| x == PACK_ENTRY) {
+                list.push(PACK_ENTRY.into());
+                *line = format!("incompatibleResourcePacks:{}", serde_json::to_string(&list).unwrap_or_default());
+            }
+            break;
+        }
+    }
+    if !found_incompat {
+        lines.push(format!("incompatibleResourcePacks:[\"{PACK_ENTRY}\"]"));
+    }
 
     let mut out = lines.join("\n");
     if !out.is_empty() && !out.ends_with('\n') {
@@ -933,6 +1012,77 @@ mod tests {
         assert_eq!(pack_format_for_mc("1.19.2"), 12);
         assert_eq!(pack_format_for_mc("1.16.5"), 6);
         assert_eq!(pack_format_for_mc("1.12.2"), 3);
+        assert_eq!(pack_format_for_mc("1.21.5"), 55);
+        assert_eq!(pack_format_for_mc("1.21.11"), 75);
+        // 26.x used to fall through to 3 → the game dropped the pack.
+        assert_eq!(pack_format_for_mc("26.3"), NEW_PACK_FORMATS);
+        assert_eq!(pack_format_for_mc("26.3-forge-66.1.9"), NEW_PACK_FORMATS);
+    }
+
+    /// The game's own rules: old clients read `pack_format`, 1.21.9+ only
+    /// `min_format`/`max_format` (as in the jar's built-in packs).
+    #[test]
+    fn pack_mcmeta_matches_client_scheme() {
+        let parse = |s: String| serde_json::from_str::<serde_json::Value>(&s).unwrap()["pack"].clone();
+        let old = parse(pack_mcmeta(15));
+        assert_eq!(old["pack_format"], 15);
+        assert!(old.get("min_format").is_none());
+        let new = parse(pack_mcmeta(97));
+        assert_eq!(new["min_format"], 97);
+        assert_eq!(new["max_format"], 97);
+        assert!(new.get("pack_format").is_none(), "26.x rejects old-style packs");
+        let unknown = parse(pack_mcmeta(NEW_PACK_FORMATS));
+        assert_eq!(unknown["min_format"], 65);
+        assert!(unknown["max_format"].as_u64().unwrap() > 1000);
+    }
+
+    #[test]
+    fn options_keep_pack_even_if_game_calls_it_incompatible() {
+        let cfg = EffectsConfig::default();
+        let out = patch_options_text("resourcePacks:[\"vanilla\"]\nincompatibleResourcePacks:[]\n", &cfg);
+        assert!(out.contains("incompatibleResourcePacks:[\"file/SadEffects\"]"));
+        assert_eq!(patch_options_text(&out, &cfg), out, "second apply changes nothing");
+        let fresh = patch_options_text("fov:70.0\n", &cfg);
+        assert!(fresh.contains("incompatibleResourcePacks:[\"file/SadEffects\"]"));
+    }
+
+    const LIGHT_26: &str = "#ifndef MINECRAFT_SAMPLE_LIGHTMAP_GLSL\n#define MINECRAFT_SAMPLE_LIGHTMAP_GLSL\n\nvec4 sample_lightmap(sampler2D lightMap, ivec2 uv) {\n    return texture(lightMap, clamp((uv / 256.0) + 0.5 / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0)));\n}\n\n#endif\n";
+    const FOG_26: &str = "float linear_fog_value(float vertexDistance, float fogStart, float fogEnd) {\n    if (vertexDistance <= fogStart) {\n        return 0.0;\n    }\n    return (vertexDistance - fogStart) / (fogEnd - fogStart);\n}\n\nfloat total_fog_value(float a, float b) {\n    return max(linear_fog_value(a, 1.0, 2.0), b);\n}\n";
+
+    #[test]
+    fn shaders_of_26_x_are_patched() {
+        let light = patch_light_glsl(LIGHT_26, 1.0).unwrap();
+        assert!(light.contains("vec4 sad_orig_sample_lightmap(sampler2D lightMap, ivec2 uv)"));
+        assert!(light.contains("return mix(sad_orig_sample_lightmap(lightMap, uv), vec4(1.0), 1.000);"));
+        let off = patch_fog_glsl(FOG_26, true, 1.0).unwrap();
+        assert!(off.contains("float linear_fog_value(float vertexDistance, float fogStart, float fogEnd) {\n    return 0.0;"));
+        assert!(off.contains("float total_fog_value("), "rest of fog.glsl kept");
+        let far = patch_fog_glsl(FOG_26, false, 4.0).unwrap();
+        assert!(far.contains("return sad_orig_linear_fog_value(vertexDistance, fogStart * 4.00, fogEnd * 4.00);"));
+    }
+
+    /// The installed 26.3 client: its real format and shaders.
+    #[test]
+    fn real_26_client_pack_and_shaders() {
+        let jar = crate::config::data_dir().join("game/versions/26.3/26.3.jar");
+        if !jar.is_file() {
+            return;
+        }
+        assert_eq!(client_pack_format(&jar), Some(97));
+        let light = jar_text(&jar, LIGHT_SHADERS[1]).unwrap();
+        assert!(patch_light_glsl(&light, 0.8).is_some());
+        let fog = jar_text(&jar, "assets/minecraft/shaders/include/fog.glsl").unwrap();
+        assert!(patch_fog_glsl(&fog, true, 1.0).is_some());
+        let mut cfg = EffectsConfig::default();
+        cfg.fullbright = true;
+        cfg.custom_fog = true;
+        cfg.fog_disable = true;
+        let files = pack_files("26.3", &cfg, Some(&jar)).unwrap();
+        let has = |n: &str| files.iter().any(|(f, _)| f == n);
+        assert!(has(LIGHT_SHADERS[1]) && !has(LIGHT_SHADERS[0]));
+        assert!(has("assets/minecraft/shaders/include/fog.glsl"));
+        let meta = &files.iter().find(|(f, _)| f == "pack.mcmeta").unwrap().1;
+        assert!(String::from_utf8_lossy(meta).contains("\"min_format\":97"));
     }
 
     #[test]
@@ -1020,6 +1170,7 @@ mod tests {
         let fog = jar_text(&jar, "assets/minecraft/shaders/include/fog.glsl").unwrap();
         let out = patch_fog_glsl(&fog, true, 1.0).unwrap();
         assert!(out.contains("float fog_distance("), "rest of fog.glsl kept");
+        assert_eq!(client_pack_format(&jar), Some(15));
     }
 
     #[test]

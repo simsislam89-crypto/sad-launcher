@@ -854,8 +854,10 @@ impl Launcher {
                             Some(("Включён · ждёт запуска игры".into(), false))
                         } else if snap.mc_focused {
                             Some((format!("Работает в игре · кликов: {}", snap.click_count), true))
+                        } else if snap.click_background {
+                            Some((format!("Кликает в фоне · кликов: {}", snap.click_count), true))
                         } else {
-                            Some(("Пауза: окно Minecraft не активно".into(), false))
+                            Some(("Пауза: игра не в фокусе · для кликов в фоне нажми в игре F3+P".into(), false))
                         }
                     } else if snap.mc_running {
                         Some(("Готов к запуску по бинду".into(), false))
@@ -867,7 +869,7 @@ impl Launcher {
                         skin,
                         &mut self.effects.autoclicker,
                         "Автокликер (только окно Minecraft)",
-                        "Автоматически нажимает ЛКМ или ПКМ строго внутри активного окна Minecraft и сам ставится на паузу при переключении окон.",
+                        "Кликает прямо в окно Minecraft, а не курсором: клик не уйдёт в другое окно и не нажмёт крестик. Когда игра не в фокусе, ждёт, а если в игре выключена пауза при сворачивании (F3+P), кликает и в фоне.",
                         ac_badge,
                         None,
                     )

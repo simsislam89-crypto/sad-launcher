@@ -1,5 +1,6 @@
 //! Автокликер (строго внутри окна Minecraft) и защита от АФК.
-//! На Windows использует Win32 `SendInput`, `GetAsyncKeyState` и проверку PID/окна;
+//! На Windows клики и F3+T идут сообщениями прямо в окно игры (`PostMessageW`,
+//! не через курсор), бинды — `GetAsyncKeyState`, окно — по PID/классу;
 //! на других ОС собирается с безопасной заглушкой, чтобы не ломать кросс-сборку.
 
 use crate::effects::EffectsConfig;
@@ -31,6 +32,9 @@ pub struct AutomationSnapshot {
     pub autoclicker: bool,
     pub afk_ticks: u64,
     pub click_count: u64,
+    /// Clicking while the game window is in the background (its pause on
+    /// lost focus is off, so no menu can catch the clicks).
+    pub click_background: bool,
     pub next_afk_in: Option<u32>,
     pub mc_title: String,
     pub toggle_seq: u64,
@@ -45,6 +49,7 @@ impl Default for AutomationSnapshot {
             autoclicker: false,
             afk_ticks: 0,
             click_count: 0,
+            click_background: false,
             next_afk_in: None,
             mc_title: String::new(),
             toggle_seq: 0,
@@ -52,20 +57,75 @@ impl Default for AutomationSnapshot {
     }
 }
 
+/// What the launcher needs from the game's `options.txt`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GameOptions {
+    /// `pauseOnLostFocus` (F3+P): the pause menu opens when the window
+    /// loses focus — debug keys are ignored and clicks would hit its buttons.
+    pub pause_on_lost_focus: bool,
+    /// Virtual keys of the debug modifier (F3) and «reload resource packs»
+    /// (T) — rebindable since 1.21.9.
+    pub debug_modifier: u16,
+    pub reload_key: u16,
+}
+
+impl Default for GameOptions {
+    fn default() -> Self {
+        Self {
+            pause_on_lost_focus: true,
+            debug_modifier: 0x72,
+            reload_key: 0x54,
+        }
+    }
+}
+
+/// `key.keyboard.f3` → VK_F3; letters, digits and F1–F24 only.
+fn mc_key_vk(name: &str) -> Option<u16> {
+    let k = name.trim().strip_prefix("key.keyboard.")?;
+    if let Some(n) = k.strip_prefix('f').and_then(|n| n.parse::<u16>().ok()) {
+        return (1..=24).contains(&n).then(|| 0x6F + n);
+    }
+    let mut chars = k.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphanumeric() => Some(c.to_ascii_uppercase() as u16),
+        _ => None,
+    }
+}
+
+pub fn parse_game_options(text: &str) -> GameOptions {
+    let mut o = GameOptions::default();
+    for line in text.lines() {
+        let Some((key, val)) = line.split_once(':') else { continue };
+        match key {
+            "pauseOnLostFocus" => o.pause_on_lost_focus = val.trim() != "false",
+            "key_key.debug.modifier" => o.debug_modifier = mc_key_vk(val).unwrap_or(o.debug_modifier),
+            "key_key.debug.reloadResourcePacks" => o.reload_key = mc_key_vk(val).unwrap_or(o.reload_key),
+            _ => {}
+        }
+    }
+    o
+}
+
+pub fn read_game_options(instance: &std::path::Path) -> GameOptions {
+    std::fs::read_to_string(instance.join("options.txt"))
+        .map(|t| parse_game_options(&t))
+        .unwrap_or_default()
+}
+
 /// Makes a running Minecraft reload its resource packs (F3+T) so a changed
-/// effects pack shows at once. Runs on its own thread (it waits between
-/// keys); false when no game window was found.
-pub fn reload_game_resources(child_pid: u32) -> bool {
+/// effects pack shows at once — keys go straight to the game window, no
+/// focus needed. False when no game window was found.
+pub fn reload_game_resources(child_pid: u32, instance: &std::path::Path) -> bool {
     let (found, hwnd, _) = platform::find_minecraft_window(child_pid);
     if !found {
         return false;
     }
-    std::thread::Builder::new()
-        .name("sad-reload".into())
-        .spawn(move || {
-            platform::send_reload_keys(hwnd);
-        })
-        .is_ok()
+    let opts = read_game_options(instance);
+    // The player is in the launcher, so the game shows its pause menu, and
+    // Minecraft ignores debug keys while any screen is open: Esc closes the
+    // menu first (it reopens on the next frame by itself).
+    let close_menu = opts.pause_on_lost_focus && !platform::is_foreground(hwnd);
+    platform::send_reload_keys(hwnd, opts.debug_modifier, opts.reload_key, close_menu)
 }
 
 pub fn clamp_interval_secs(secs: u32) -> u32 {
@@ -142,6 +202,9 @@ struct RuntimeConfig {
     capturing_bind: AtomicBool,
     toggle_seq: AtomicU64,
     stop: AtomicBool,
+    /// Folder of the active build: its options.txt says whether clicks may
+    /// go to the game in the background.
+    instance: Mutex<std::path::PathBuf>,
 }
 
 impl RuntimeConfig {
@@ -157,6 +220,7 @@ impl RuntimeConfig {
             capturing_bind: AtomicBool::new(false),
             toggle_seq: AtomicU64::new(0),
             stop: AtomicBool::new(false),
+            instance: Mutex::new(std::path::PathBuf::new()),
         }
     }
 }
@@ -209,6 +273,14 @@ impl AutomationHandle {
             .store(parse_bind_vk(&cfg.autoclicker_bind).unwrap_or(0) as u32, Ordering::Relaxed);
     }
 
+    pub fn set_instance(&self, dir: &std::path::Path) {
+        if let Ok(mut cur) = self.rt.instance.lock() {
+            if cur.as_path() != dir {
+                *cur = dir.to_path_buf();
+            }
+        }
+    }
+
     pub fn set_capturing_bind(&self, capturing: bool) {
         self.rt.capturing_bind.store(capturing, Ordering::Relaxed);
     }
@@ -236,6 +308,8 @@ fn worker_loop(
     let mut fine_timer = false;
     let mut cached_fg = FgInfo::default();
     let mut last_fg = Instant::now() - Duration::from_secs(1);
+    let mut game_opts = GameOptions::default();
+    let mut last_opts = Instant::now() - Duration::from_secs(10);
 
     while !rt.stop.load(Ordering::Relaxed) {
         let capturing = rt.capturing_bind.load(Ordering::Relaxed);
@@ -328,7 +402,18 @@ fn worker_loop(
         let autoclicker_on = rt.autoclicker.load(Ordering::Relaxed);
         let click_ms = rt.autoclicker_ms.load(Ordering::Relaxed).clamp(1, 1000) as u64;
         let click_every = Duration::from_millis(click_ms);
-        let clicking = autoclicker_on && mc_running && mc_focused && !capturing;
+        if autoclicker_on && last_opts.elapsed() >= Duration::from_secs(2) {
+            let dir = rt.instance.lock().map(|d| d.clone()).unwrap_or_default();
+            game_opts = read_game_options(&dir);
+            last_opts = Instant::now();
+        }
+        // Clicks are posted to the game window itself, never through the
+        // cursor: they cannot land on another window or the title bar's ×.
+        // In the background only with pause-on-lost-focus off — otherwise
+        // the pause menu would take them (and «Disconnect» is a button).
+        // Only our own game: its options.txt is the one read above.
+        let click_background = !mc_focused && child_running && !game_opts.pause_on_lost_focus;
+        let clicking = autoclicker_on && mc_running && mc_hwnd != 0 && !capturing && (mc_focused || click_background);
         // 1 ms timer only while clicking: Windows sleeps in ~15.6 ms steps
         // otherwise, so «10 мс» would really click every ~16 ms.
         if clicking != fine_timer {
@@ -337,8 +422,9 @@ fn worker_loop(
         }
         if clicking {
             if last_click.elapsed() >= click_every {
-                platform::send_mouse_click(rt.autoclicker_rmb.load(Ordering::Relaxed));
-                click_count += 1;
+                if platform::send_mouse_click(mc_hwnd, rt.autoclicker_rmb.load(Ordering::Relaxed)) {
+                    click_count += 1;
+                }
                 // Fixed cadence (no drift from the time spent sending), but
                 // never a burst to «catch up» after a pause.
                 last_click += click_every;
@@ -356,6 +442,7 @@ fn worker_loop(
                     || guard.anti_afk != anti_afk_on
                     || guard.autoclicker != autoclicker_on
                     || guard.toggle_seq != toggle_seq
+                    || guard.click_background != (clicking && click_background)
                     || guard.mc_title != mc_title;
                 guard.mc_running = mc_running;
                 guard.mc_focused = mc_focused;
@@ -363,6 +450,7 @@ fn worker_loop(
                 guard.autoclicker = autoclicker_on;
                 guard.afk_ticks = afk_ticks;
                 guard.click_count = click_count;
+                guard.click_background = clicking && click_background;
                 guard.next_afk_in = next_afk_in;
                 guard.mc_title = mc_title;
                 guard.toggle_seq = toggle_seq;
@@ -458,12 +546,13 @@ mod platform {
         u: InputUnion,
     }
 
-    const INPUT_MOUSE: u32 = 0;
     const INPUT_KEYBOARD: u32 = 1;
-    const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
-    const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
-    const MOUSEEVENTF_RIGHTDOWN: u32 = 0x0008;
-    const MOUSEEVENTF_RIGHTUP: u32 = 0x0010;
+    const WM_LBUTTONDOWN: u32 = 0x0201;
+    const WM_LBUTTONUP: u32 = 0x0202;
+    const WM_RBUTTONDOWN: u32 = 0x0204;
+    const WM_RBUTTONUP: u32 = 0x0205;
+    const MK_LBUTTON: usize = 0x0001;
+    const MK_RBUTTON: usize = 0x0002;
     const KEYEVENTF_KEYUP: u32 = 0x0002;
     const KEYEVENTF_SCANCODE: u32 = 0x0008;
     const WM_KEYDOWN: u32 = 0x0100;
@@ -485,6 +574,20 @@ mod platform {
         fn MapVirtualKeyW(u_code: u32, u_map_type: u32) -> u32;
         fn SendInput(c_inputs: u32, p_inputs: *const WinInput, cb_size: i32) -> u32;
         fn PostMessageW(hwnd: *mut c_void, msg: u32, w_param: usize, l_param: isize) -> i32;
+        fn GetClientRect(hwnd: *mut c_void, rect: *mut WinRect) -> i32;
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct WinRect {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
+
+    pub(super) fn is_foreground(hwnd: usize) -> bool {
+        hwnd != 0 && unsafe { GetForegroundWindow() } as usize == hwnd
     }
 
     #[link(name = "winmm")]
@@ -496,29 +599,31 @@ mod platform {
     /// F3+T into the game window as posted key messages: Minecraft reloads
     /// its resource packs (the effects pack among them) without focus and
     /// without the player pressing anything. Scan codes ride in lParam —
-    /// GLFW maps keys by scan code.
-    pub(super) fn send_reload_keys(hwnd: usize) -> bool {
-        const VK_F3: usize = 0x72;
-        const VK_T: usize = 0x54;
-        const SC_F3: isize = 0x3D;
-        const SC_T: isize = 0x14;
+    /// GLFW maps keys by scan code. One burst, no pauses: GLFW handles the
+    /// whole queue in one poll, before the next frame could reopen the
+    /// pause menu that `close_menu` (Esc) shuts.
+    pub(super) fn send_reload_keys(hwnd: usize, modifier: u16, key: u16, close_menu: bool) -> bool {
+        const VK_ESCAPE: u16 = 0x1B;
         if hwnd == 0 {
             return false;
         }
         let h = hwnd as *mut c_void;
-        let down = |sc: isize| 1isize | (sc << 16);
-        let up = |sc: isize| 1isize | (sc << 16) | (1isize << 30) | (1isize << 31);
+        let lp = |vk: u16, up: bool| {
+            let sc = unsafe { MapVirtualKeyW(vk as u32, 0) } as isize;
+            let flags = if up { (1isize << 30) | (1isize << 31) } else { 0 };
+            1isize | (sc << 16) | flags
+        };
+        let mut keys: Vec<(u32, u16)> = Vec::with_capacity(6);
+        if close_menu {
+            keys.push((WM_KEYDOWN, VK_ESCAPE));
+            keys.push((WM_KEYUP, VK_ESCAPE));
+        }
+        keys.extend([(WM_KEYDOWN, modifier), (WM_KEYDOWN, key), (WM_KEYUP, key), (WM_KEYUP, modifier)]);
         // SAFETY: posting messages to a window handle only queues them; a
         // stale handle makes PostMessageW fail, nothing else.
-        unsafe {
-            PostMessageW(h, WM_KEYDOWN, VK_F3, down(SC_F3));
-            std::thread::sleep(Duration::from_millis(40));
-            PostMessageW(h, WM_KEYDOWN, VK_T, down(SC_T));
-            std::thread::sleep(Duration::from_millis(40));
-            PostMessageW(h, WM_KEYUP, VK_T, up(SC_T));
-            std::thread::sleep(Duration::from_millis(40));
-            PostMessageW(h, WM_KEYUP, VK_F3, up(SC_F3)) != 0
-        }
+        keys.into_iter()
+            .map(|(msg, vk)| unsafe { PostMessageW(h, msg, vk as usize, lp(vk, msg == WM_KEYUP)) } != 0)
+            .fold(true, |ok, sent| ok && sent)
     }
 
     pub(super) fn fine_timer(on: bool) {
@@ -618,47 +723,24 @@ mod platform {
         (st.found_hwnd != 0, st.found_hwnd, st.title)
     }
 
-    pub(super) fn send_mouse_click(rmb: bool) {
-        let (down_f, up_f) = if rmb {
-            (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)
-        } else {
-            (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
-        };
-        let inputs = [
-            WinInput {
-                input_type: INPUT_MOUSE,
-                u: InputUnion {
-                    mi: MouseInput {
-                        dx: 0,
-                        dy: 0,
-                        mouse_data: 0,
-                        dw_flags: down_f,
-                        time: 0,
-                        dw_extra_info: 0,
-                    },
-                },
-            },
-            WinInput {
-                input_type: INPUT_MOUSE,
-                u: InputUnion {
-                    mi: MouseInput {
-                        dx: 0,
-                        dy: 0,
-                        mouse_data: 0,
-                        dw_flags: up_f,
-                        time: 0,
-                        dw_extra_info: 0,
-                    },
-                },
-            },
-        ];
-        unsafe {
-            SendInput(
-                inputs.len() as u32,
-                inputs.as_ptr(),
-                std::mem::size_of::<WinInput>() as i32,
-            );
+    /// A click posted to the game window itself (client centre), not
+    /// through the real cursor: it cannot hit another window or the ×.
+    pub(super) fn send_mouse_click(hwnd: usize, rmb: bool) -> bool {
+        if hwnd == 0 {
+            return false;
         }
+        let h = hwnd as *mut c_void;
+        let mut r = WinRect::default();
+        unsafe { GetClientRect(h, &mut r) };
+        let (x, y) = (((r.right - r.left) / 2) as isize, ((r.bottom - r.top) / 2) as isize);
+        let pos = (x & 0xFFFF) | ((y & 0xFFFF) << 16);
+        let (down, up, held) = if rmb {
+            (WM_RBUTTONDOWN, WM_RBUTTONUP, MK_RBUTTON)
+        } else {
+            (WM_LBUTTONDOWN, WM_LBUTTONUP, MK_LBUTTON)
+        };
+        // SAFETY: only queues messages; a stale handle fails the call.
+        unsafe { PostMessageW(h, down, held, pos) != 0 && PostMessageW(h, up, 0, pos) != 0 }
     }
 
     pub(super) fn send_afk_step(mc_focused: bool, mc_hwnd: usize) -> bool {
@@ -786,9 +868,15 @@ mod platform {
         (false, 0, String::new())
     }
 
-    pub(super) fn send_mouse_click(_rmb: bool) {}
+    pub(super) fn send_mouse_click(_hwnd: usize, _rmb: bool) -> bool {
+        false
+    }
 
-    pub(super) fn send_reload_keys(_hwnd: usize) -> bool {
+    pub(super) fn is_foreground(_hwnd: usize) -> bool {
+        false
+    }
+
+    pub(super) fn send_reload_keys(_hwnd: usize, _modifier: u16, _key: u16, _close_menu: bool) -> bool {
         false
     }
 
@@ -826,6 +914,28 @@ mod tests {
     }
 
     #[cfg(all(windows, target_pointer_width = "64"))]
+    #[test]
+    fn reads_pause_and_debug_keys_from_options() {
+        assert_eq!(parse_game_options(""), GameOptions::default());
+        let o = parse_game_options(
+            "pauseOnLostFocus:false
+key_key.debug.modifier:key.keyboard.f4
+key_key.debug.reloadResourcePacks:key.keyboard.r
+",
+        );
+        assert!(!o.pause_on_lost_focus);
+        assert_eq!((o.debug_modifier, o.reload_key), (0x73, 0x52));
+        // Unsupported binding (a mouse button) → keep the default key.
+        let o = parse_game_options("pauseOnLostFocus:true
+key_key.debug.reloadResourcePacks:key.mouse.left
+");
+        assert!(o.pause_on_lost_focus);
+        assert_eq!(o.reload_key, 0x54);
+        assert_eq!(mc_key_vk("key.keyboard.7"), Some(0x37));
+        assert_eq!(mc_key_vk("key.keyboard.f12"), Some(0x7B));
+        assert_eq!(mc_key_vk("key.keyboard.left.shift"), None);
+    }
+
     #[test]
     fn win64_input_struct_matches_winuser_abi() {
         assert_eq!(platform::input_struct_size(), 40);
