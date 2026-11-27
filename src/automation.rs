@@ -1035,6 +1035,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(all(windows, target_pointer_width = "64"))]
     fn win64_input_struct_matches_winuser_abi() {
         assert_eq!(platform::input_struct_size(), 40);
     }
