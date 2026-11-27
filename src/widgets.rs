@@ -44,7 +44,8 @@ pub fn button_sized(
         .painter()
         .layout_no_wrap(label.to_owned(), font, skin.ink());
     let width = galley.size().x + pad * 2.0;
-    let (slot, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (slot, resp) = ui.allocate_exact_size(Vec2::new(width, height), sense);
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);
@@ -145,7 +146,8 @@ pub fn button_icon(
     let icon_sz = (font_size + 1.0).clamp(10.0, 15.0);
     let gap = 6.0;
     let width = pad * 2.0 + icon_sz + gap + galley.size().x;
-    let (slot, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (slot, resp) = ui.allocate_exact_size(Vec2::new(width, height), sense);
     let hover = ui
         .ctx()
         .animate_bool_with_time(resp.id, resp.hovered() && enabled, 0.12);

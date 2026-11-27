@@ -175,7 +175,12 @@ pub async fn fill_missing<F: FnMut(ModEvent) + Send>(
                 queue.push(*dep);
             }
         }
-        let name = if file.name.is_empty() { format!("cf-{}.jar", file.id) } else { file.name.clone() };
+        let clean = crate::mods::sanitize(&file.name);
+        let name = if clean.is_empty() || (!clean.ends_with(".jar") && !clean.ends_with(".zip")) {
+            format!("cf-{}.jar", file.id)
+        } else {
+            clean
+        };
         on(ModEvent::File(name.clone()));
         crate::minecraft::download_file(client, &file.url, &mods_dir.join(&name), Some(cancel.as_ref())).await?;
         let pretty = KNOWN

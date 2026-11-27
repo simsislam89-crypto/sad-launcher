@@ -300,11 +300,11 @@ fn worker_loop(
     let mut afk_ticks = 0u64;
     let mut click_count = 0u64;
     let mut cached_ext = (false, 0usize, String::new());
-    let mut last_scan = Instant::now() - Duration::from_secs(2);
+    let mut last_scan: Option<Instant> = None;
     let mut prev_anti_afk_on = rt.anti_afk.load(Ordering::Relaxed);
     let mut fine_timer = false;
     let mut cached_fg = FgInfo::default();
-    let mut last_fg = Instant::now() - Duration::from_secs(1);
+    let mut last_fg: Option<Instant> = None;
     let mut reload_seq = 0u64;
 
     while !rt.stop.load(Ordering::Relaxed) {
@@ -350,17 +350,17 @@ fn worker_loop(
 
         // Focus check every tick while it matters; when idle the hotkey
         // poll may still run every 35 ms, the window lookups need not.
-        if !idle || last_fg.elapsed() >= Duration::from_millis(400) {
+        if !idle || last_fg.map(|t| t.elapsed() >= Duration::from_millis(400)).unwrap_or(true) {
             cached_fg = platform::foreground_minecraft(child_pid);
-            last_fg = Instant::now();
+            last_fg = Some(Instant::now());
         }
         let fg = &cached_fg;
         if fg.is_mc {
             cached_ext = (true, fg.hwnd_raw, fg.title.clone());
-            last_scan = Instant::now();
-        } else if last_scan.elapsed() >= scan_every {
+            last_scan = Some(Instant::now());
+        } else if last_scan.map(|t| t.elapsed() >= scan_every).unwrap_or(true) {
             cached_ext = platform::find_minecraft_window(child_pid);
-            last_scan = Instant::now();
+            last_scan = Some(Instant::now());
         }
 
         let mc_running = child_running || cached_ext.0;

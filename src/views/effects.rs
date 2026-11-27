@@ -273,6 +273,7 @@ impl Launcher {
                     );
                     if fog_res.toggled {
                         changed = true;
+                        auto_apply = true;
                     }
                     if fog_res.clicked_mod {
                         if let Some(m) = effects::effect_mod_spec("custom_fog") {
@@ -285,10 +286,12 @@ impl Launcher {
                             if widgets::chip(ui, skin, "Отключить туман", self.effects.fog_disable).clicked() {
                                 self.effects.fog_disable = true;
                                 changed = true;
+                                auto_apply = true;
                             }
                             if widgets::chip(ui, skin, "Свой цвет и плотность", !self.effects.fog_disable).clicked() {
                                 self.effects.fog_disable = false;
                                 changed = true;
+                                auto_apply = true;
                             }
                             if !self.effects.fog_disable {
                                 for tone in ["Нейтральный", "Холодный", "Тёплый", "Тёмный"] {
@@ -310,10 +313,12 @@ impl Launcher {
                                     .font(theme::mono(11.0))
                                     .color(skin.dim()),
                                 );
-                                if widgets::slider(ui, skin, &mut self.effects.fog_density, 0.0, 1.0)
-                                    .changed()
-                                {
+                                let fog_sl = widgets::slider(ui, skin, &mut self.effects.fog_density, 0.0, 1.0);
+                                if fog_sl.changed() {
                                     changed = true;
+                                }
+                                if fog_sl.drag_stopped() {
+                                    auto_apply = true;
                                 }
                             });
                         }
@@ -935,6 +940,63 @@ impl Launcher {
                     });
                 });
                 }
+
+                ui.add_space(14.0);
+
+                // -------------------------------- 5. Запись реплеев (Replay Mod / Flashback)
+                widgets::section_label(ui, skin, "ЗАПИСЬ РЕПЛЕЕВ (REPLAY MOD / FLASHBACK)");
+                ui.add_space(6.0);
+                theme::card_frame(skin).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let replay_ok = effects::is_effect_mod_installed("replay", &self.mods_cache);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new(effects::REPLAY_MOD.title)
+                                .font(theme::display(14.0))
+                                .color(skin.ink()),
+                        );
+                        if replay_ok {
+                            widgets::semantic_badge(ui, "Готово", skin.green());
+                        } else if is_vanilla {
+                            widgets::badge(ui, skin, "Нужен Fabric / Forge / NeoForge", false);
+                        } else {
+                            widgets::badge(ui, skin, "Не установлен", false);
+                        }
+                        if !replay_ok && !is_vanilla && !downloading_mods {
+                            if widgets::button_icon(
+                                ui,
+                                skin,
+                                crate::icons::Icon::Play,
+                                "Установить реплей-мод",
+                                Btn::Outline,
+                                true,
+                                26.0,
+                                10.5,
+                                10.0,
+                            )
+                            .clicked()
+                            {
+                                install_targets.push(effects::REPLAY_MOD);
+                            }
+                        }
+                        if widgets::button_sized(ui, skin, "Папка реплеев", Btn::Ghost, true, 26.0, 10.5, 10.0)
+                            .clicked()
+                        {
+                            let rdir = effects::replay_dir(&self.cfg.instance_dir());
+                            let _ = std::fs::create_dir_all(&rdir);
+                            crate::util::open_path(&rdir);
+                        }
+                    });
+                    ui.add_space(3.0);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new("Запись игровых повторов и пролётов камеры: ставит Flashback или Replay Mod под текущую сборку и открывает папку с записями.")
+                                .font(theme::body(11.5))
+                                .color(skin.faint()),
+                        )
+                        .wrap(),
+                    );
+                });
 
                 ui.add_space(16.0);
             });

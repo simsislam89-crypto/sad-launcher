@@ -322,7 +322,7 @@ async fn read_remote_entry(client: &reqwest::Client, url: &str, names: &[&str]) 
         let len = probe.len() as u64;
         (probe, Some(len), false)
     } else {
-        let size = size.ok_or_else(|| anyhow!("Размер архива неизвестен"))?;
+        let size = size.filter(|&s| s > 0).ok_or_else(|| anyhow!("Размер архива неизвестен"))?;
         let start = size.saturating_sub(65_557);
         range(client, url, Some(start), size - 1).await?
     };
@@ -332,26 +332,35 @@ async fn read_remote_entry(client: &reqwest::Client, url: &str, names: &[&str]) 
     }
     let tail_start = total.saturating_sub(tail.len() as u64);
     let (cd_offset, cd_size) = find_eocd(&tail).ok_or_else(|| anyhow!("Это не zip-архив"))?;
-    if cd_offset == 0xFFFF_FFFF {
-        bail!("Слишком большой архив");
+    if cd_offset == 0xFFFF_FFFF || cd_size == 0 {
+        bail!("Слишком большой или пустой архив");
     }
+    let cd_end = cd_offset.checked_add(cd_size).ok_or_else(|| anyhow!("Неверный заголовок архива"))?;
     let cd: Vec<u8> = if cd_offset >= tail_start {
         let from = (cd_offset - tail_start) as usize;
-        tail.get(from..from + cd_size as usize).map(<[u8]>::to_vec).unwrap_or_default()
+        tail.get(from..from.saturating_add(cd_size as usize)).map(<[u8]>::to_vec).unwrap_or_default()
     } else {
-        range(client, url, Some(cd_offset), cd_offset + cd_size - 1).await?.0
+        range(client, url, Some(cd_offset), cd_end - 1).await?.0
     };
     let entries = parse_central(&cd);
     let entry = names
         .iter()
         .find_map(|want| entries.iter().find(|e| e.name == *want))
         .ok_or_else(|| anyhow!("В архиве нет индекса пака"))?;
+    if entry.offset >= total {
+        bail!("Неверное смещение записи в архиве");
+    }
     // Local headers can carry a different extra field: ask for some slack.
-    let end = entry.offset + 30 + entry.name.len() as u64 + 1024 + entry.comp;
+    let end = entry
+        .offset
+        .saturating_add(30)
+        .saturating_add(entry.name.len() as u64)
+        .saturating_add(1024)
+        .saturating_add(entry.comp);
     let local = if entry.offset >= tail_start && end <= total {
         tail[(entry.offset - tail_start) as usize..].to_vec()
     } else {
-        range(client, url, Some(entry.offset), end.min(total) - 1).await?.0
+        range(client, url, Some(entry.offset), end.min(total).saturating_sub(1)).await?.0
     };
     let data = inflate_local(&local, entry)?;
     Ok((entry.name.clone(), data, total))

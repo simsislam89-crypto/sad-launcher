@@ -130,6 +130,38 @@ impl Launcher {
                         }
                     }
                 });
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Папка:")
+                            .font(theme::body(13.0))
+                            .color(skin.dim()),
+                    );
+                    ui.add_space(6.0);
+                    let folder_hint = if self.build_new_dir.trim().is_empty() {
+                        "автоматически (своя изолированная папка)".to_string()
+                    } else {
+                        super::truncate(&self.build_new_dir, 46)
+                    };
+                    ui.label(
+                        RichText::new(folder_hint)
+                            .font(theme::mono(11.0))
+                            .color(skin.faint()),
+                    );
+                    if widgets::button_sized(ui, skin, "Выбрать…", Btn::Ghost, true, 24.0, 11.0, 10.0)
+                        .clicked()
+                    {
+                        if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                            self.build_new_dir = dir.display().to_string();
+                        }
+                    }
+                    if !self.build_new_dir.is_empty()
+                        && widgets::button_sized(ui, skin, "Сброс", Btn::Ghost, true, 24.0, 11.0, 8.0)
+                            .clicked()
+                    {
+                        self.build_new_dir.clear();
+                    }
+                });
                 ui.add_space(12.0);
 
                 ui.horizontal(|ui| {
@@ -141,10 +173,13 @@ impl Launcher {
                             &self.build_new_mc,
                             &self.build_new_loader,
                             "Личная сборка",
+                            &self.build_new_dir,
                         ) {
                             Ok(created) => {
                                 self.build_selected_id = created.id.clone();
                                 self.build_creating = false;
+                                self.build_new_name.clear();
+                                self.build_new_dir.clear();
                                 self.toast(format!("Создана сборка: {}", created.name));
                             }
                             Err(e) => {
@@ -247,6 +282,41 @@ impl Launcher {
                 .font(theme::mono(11.0))
                 .color(skin.faint()),
             );
+            let build_dir = self.cfg.instance_dir_for(&current_profile.id);
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 4.0);
+                ui.label(
+                    RichText::new(format!("Папка: {}", super::truncate(&build_dir.display().to_string(), 62)))
+                        .font(theme::mono(10.5))
+                        .color(skin.dim()),
+                )
+                .on_hover_text(build_dir.display().to_string());
+                if widgets::button_sized(ui, skin, "Сменить папку…", Btn::Ghost, true, 22.0, 10.5, 8.0)
+                    .clicked()
+                {
+                    if let Some(dir) = rfd::FileDialog::new().set_directory(&build_dir).pick_folder() {
+                        match profiles::set_profile_dir(&self.cfg, &current_profile.id, &dir.display().to_string()) {
+                            Ok(()) => {
+                                self.touch_mods();
+                                self.toast("Папка сборки обновлена");
+                            }
+                            Err(e) => self.toast(format!("Не удалось: {e}")),
+                        }
+                    }
+                }
+                if !current_profile.custom_dir.trim().is_empty()
+                    && widgets::button_sized(ui, skin, "Стандартная", Btn::Ghost, true, 22.0, 10.5, 8.0)
+                        .clicked()
+                {
+                    if let Err(e) = profiles::set_profile_dir(&self.cfg, &current_profile.id, "") {
+                        self.toast(format!("Не удалось: {e}"));
+                    } else {
+                        self.touch_mods();
+                        self.toast("Возвращена стандартная папка сборки");
+                    }
+                }
+            });
             // Pack builds: which version is installed and whether the pack
             // has a newer one (asked live from Modrinth / CurseForge).
             if current_profile.kind == ProfileKind::Modpack {

@@ -467,12 +467,13 @@ async fn write_stream(
             }
         }
         count(chunk.len());
-        done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
         pos += chunk.len() as u64;
         buf.extend_from_slice(&chunk);
         if buf.len() >= 256 * 1024 {
             write_at(file, &buf, buf_at)?;
-            *written += buf.len() as u64;
+            let n = buf.len() as u64;
+            done.fetch_add(n, Ordering::Relaxed);
+            *written += n;
             buf_at = pos;
             buf.clear();
         }
@@ -485,7 +486,9 @@ async fn write_stream(
     }
     if !buf.is_empty() {
         write_at(file, &buf, buf_at)?;
-        *written += buf.len() as u64;
+        let n = buf.len() as u64;
+        done.fetch_add(n, Ordering::Relaxed);
+        *written += n;
     }
     Ok(pos - offset)
 }

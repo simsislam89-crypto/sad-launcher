@@ -2058,7 +2058,7 @@ async fn curse_detail(client: &reqwest::Client, cfg: &Config, hit: &ModHit) -> R
     let page_url = m
         .links
         .map(|l| l.website_url)
-        .filter(|u| !u.is_empty())
+        .filter(|u| u.starts_with("https://") || u.starts_with("http://"))
         .unwrap_or_else(|| format!("https://www.curseforge.com/projects/{}", hit.id));
     Ok(ProjectDetail {
         updated,
@@ -2246,6 +2246,15 @@ pub fn clean_md(md: &str) -> String {
     out.trim().to_string()
 }
 
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// `%D0%9F` → `П`; invalid sequences are kept as-is.
 pub fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
@@ -2253,8 +2262,8 @@ pub fn percent_decode(text: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&text[i + 1..i + 3], 16) {
-                out.push(b);
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((hi << 4) | lo);
                 i += 3;
                 continue;
             }
@@ -2265,12 +2274,20 @@ pub fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn sanitize(name: &str) -> String {
-    name.chars()
+pub(crate) fn sanitize(name: &str) -> String {
+    let clean: String = name
+        .chars()
         .filter(|c| !matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         .collect::<String>()
+        .replace("..", "")
         .trim()
-        .to_string()
+        .trim_start_matches('.')
+        .to_string();
+    if clean == "." || clean == ".." {
+        String::new()
+    } else {
+        clean
+    }
 }
 
 fn enc(text: &str) -> String {
@@ -2344,6 +2361,7 @@ mod tests {
             pack_file: String::new(),
             pack_version: String::new(),
             pack_date: String::new(),
+            custom_dir: String::new(),
         };
         let hit = profile_hit(&p).unwrap();
         assert_eq!((hit.source.as_str(), hit.id.as_str(), hit.kind.as_str()), ("modrinth", "Jkb29YJU", KIND_MODPACK));
@@ -2461,6 +2479,8 @@ mod tests {
         assert_eq!(percent_decode("jei%201.20.jar"), "jei 1.20.jar");
         assert_eq!(percent_decode("%D0%9F%D0%B0%D0%BA.zip"), "Пак.zip");
         assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%aП"), "%aП");
+        assert_eq!(percent_decode("%€"), "%€");
     }
 
     #[test]

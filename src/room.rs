@@ -236,7 +236,7 @@ impl Room {
                                 }
                                 since = ev.id.clone();
                                 // Old rooms with the same code are ignored.
-                                if ev.time + STALE_SECS < now_unix() {
+                                if ev.time.saturating_add(STALE_SECS) < now_unix() {
                                     continue;
                                 }
                                 if let Ok(p) = serde_json::from_str::<Presence>(&ev.message) {
@@ -264,9 +264,9 @@ impl Room {
         let stop = self.stop.clone();
         let status = self.status.clone();
         net::spawn(async move {
-            let mut last = Instant::now() - HEARTBEAT;
+            let mut last: Option<Instant> = None;
             while !stop.load(Ordering::Relaxed) {
-                let due = last.elapsed() >= HEARTBEAT;
+                let due = last.map(|t| t.elapsed() >= HEARTBEAT).unwrap_or(true);
                 if dirty.swap(false, Ordering::Relaxed) || due {
                     // Coalesce bursts of edits (typing a port) into one post.
                     tokio::time::sleep(Duration::from_millis(700)).await;
@@ -277,7 +277,7 @@ impl Room {
                         dirty.store(true, Ordering::Relaxed);
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
-                    last = Instant::now();
+                    last = Some(Instant::now());
                     ctx.request_repaint();
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -311,7 +311,7 @@ impl Room {
         let mut list: Vec<Member> = self
             .members
             .lock()
-            .map(|m| m.values().filter(|m| m.seen + STALE_SECS >= now).cloned().collect())
+            .map(|m| m.values().filter(|m| m.seen.saturating_add(STALE_SECS) >= now).cloned().collect())
             .unwrap_or_default();
         if !list.iter().any(|m| m.presence.id == me.id) {
             list.push(Member { presence: me, seen: now });

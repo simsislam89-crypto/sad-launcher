@@ -314,26 +314,17 @@ impl Launcher {
                                 .color(skin.dim()),
                         );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            let mut port_text = self.cfg.server_port.to_string();
-                            let resp = widgets::compact_input(
+                            let port_resp = widgets::compact_input(
                                 ui,
                                 skin,
                                 "port-field",
-                                &mut port_text,
+                                &mut self.server_port_buf,
                                 "25565",
                                 74.0,
                                 28.0,
                                 theme::mono(12.0),
                             );
-                            if resp.changed() {
-                                if let Ok(p) = port_text.trim().parse::<u16>() {
-                                    if p >= 1024 {
-                                        self.cfg.server_port = p;
-                                        save = true;
-                                    }
-                                }
-                            }
-                            if widgets::button_sized(
+                            let apply_clicked = widgets::button_sized(
                                 ui,
                                 skin,
                                 "Применить",
@@ -343,9 +334,23 @@ impl Launcher {
                                 10.5,
                                 9.0,
                             )
-                            .clicked()
+                            .clicked();
+                            if apply_clicked
+                                || (port_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                             {
-                                restart_server = true;
+                                match self.server_port_buf.trim().parse::<u16>() {
+                                    Ok(p) if p >= 1024 => {
+                                        self.cfg.server_port = p;
+                                        self.server_port_buf = p.to_string();
+                                        save = false;
+                                        self.save_cfg();
+                                        restart_server = true;
+                                    }
+                                    _ => {
+                                        self.server_port_buf = self.cfg.server_port.to_string();
+                                        self.toast("Порт должен быть от 1024 до 65535");
+                                    }
+                                }
                             }
                         });
                     });
@@ -379,7 +384,6 @@ impl Launcher {
                             );
                         });
                     });
-                    let smem_before = self.cfg.server_memory_mb;
                     let mut smem = self.cfg.server_memory_mb as f32;
                     let smem_resp = widgets::slider(ui, skin, &mut smem, 1024.0, 8192.0);
                     if smem_resp.changed() {
@@ -388,7 +392,10 @@ impl Launcher {
                         save = true;
                     }
                     // New RAM applies as soon as the slider is released.
-                    if smem_resp.drag_stopped() && self.cfg.server_memory_mb != smem_before {
+                    if (smem_resp.drag_stopped() || smem_resp.lost_focus())
+                        && self.cfg.server_memory_mb != self.server_mem_saved
+                    {
+                        self.server_mem_saved = self.cfg.server_memory_mb;
                         save = false;
                         self.save_cfg();
                         crate::server::restart(&self.shared);
@@ -775,6 +782,8 @@ impl Launcher {
         }
         if reset {
             self.cfg = config::Config::default();
+            self.server_port_buf = self.cfg.server_port.to_string();
+            self.server_mem_saved = self.cfg.server_memory_mb;
             self.save_cfg();
             self.reprobe_java();
             self.refresh_installed();

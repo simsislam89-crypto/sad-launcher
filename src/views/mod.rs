@@ -38,7 +38,7 @@ pub fn downloads_label(n: u64) -> String {
 }
 
 pub fn short_date(iso: &str) -> String {
-    if iso.len() >= 10 {
+    if iso.is_ascii() && iso.len() >= 10 {
         format!("{}.{}.{}", &iso[8..10], &iso[5..7], &iso[0..4])
     } else {
         iso.to_string()

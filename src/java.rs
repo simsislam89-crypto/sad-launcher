@@ -111,18 +111,6 @@ pub fn probe(custom: &str) -> Option<JavaInfo> {
     probe_all(custom).into_iter().next()
 }
 
-/// Best java for a required major version: exact match, then newer, then any.
-pub fn pick_for(custom: &str, major: u32) -> Option<JavaInfo> {
-    let all = probe_all(custom);
-    if let Some(exact) = all.iter().find(|j| j.major == major) {
-        return Some(exact.clone());
-    }
-    if let Some(newer) = all.iter().find(|j| j.major > major) {
-        return Some(newer.clone());
-    }
-    all.into_iter().next()
-}
-
 /// Java that can actually run a build: the exact major first, otherwise the
 /// smallest newer one the loader tolerates (Forge wants the exact major).
 pub fn pick_fitting(custom: &str, major: u32, loader: crate::loader::Loader) -> Option<JavaInfo> {

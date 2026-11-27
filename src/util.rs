@@ -657,6 +657,23 @@ pub fn uninstall_everything(shared: &std::sync::Arc<crate::shared::Shared>) {
 }
 
 #[cfg(windows)]
+fn is_dedicated_install_dir(dir: &std::path::Path) -> bool {
+    let Some(local) = std::env::var_os("LOCALAPPDATA") else {
+        return false;
+    };
+    let expected = std::path::PathBuf::from(local)
+        .join("Programs")
+        .join(crate::config::APP_DIR);
+    let norm = |p: &std::path::Path| -> String {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_lowercase()
+    };
+    norm(dir) == norm(&expected)
+}
+
+#[cfg(windows)]
 pub fn uninstall_everything(shared: &std::sync::Arc<crate::shared::Shared>) {
     crate::server::shutdown(shared);
     let _ = crate::launch::stop(shared);
@@ -669,25 +686,34 @@ pub fn uninstall_everything(shared: &std::sync::Arc<crate::shared::Shared>) {
     let _ = std::fs::remove_dir_all(&data);
 
     // Remove ourselves: copy a tiny deleter to temp, exit, it cleans up.
+    // Pass paths through env vars so special chars never inject into batch,
+    // and only remove the folder itself if it is our dedicated install dir.
     let self_exe = std::env::current_exe().unwrap_or_default();
-    let install_dir = self_exe
+    let dedicated_dir = self_exe
         .parent()
-        .map(|p| p.display().to_string())
-        .unwrap_or_default();
+        .filter(|p| is_dedicated_install_dir(p))
+        .map(|p| p.to_path_buf());
     let tmp = std::env::var_os("TEMP")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let rd_line = if dedicated_dir.is_some() {
+        "if defined SAD_UNINSTALL_DIR rd /s /q \"%SAD_UNINSTALL_DIR%\" 2>nul\r\n"
+    } else {
+        ""
+    };
     let script = format!(
-        "@echo off\r\n:loop\r\ndel /f /q \"{exe}\" 2>nul\r\nif exist \"{exe}\" (ping 127.0.0.1 -n 2 >nul & goto loop)\r\nrd /s /q \"{dir}\" 2>nul\r\ndel \"%~f0\" 2>nul\r\n",
-        exe = self_exe.display(),
-        dir = install_dir
+        "@echo off\r\n:loop\r\ndel /f /q \"%SAD_UNINSTALL_EXE%\" 2>nul\r\nif exist \"%SAD_UNINSTALL_EXE%\" (ping 127.0.0.1 -n 2 >nul & goto loop)\r\n{rd_line}del \"%~f0\" 2>nul\r\n"
     );
     let bat = tmp.join("madrid-uninstall.bat");
     let _ = std::fs::write(&bat, script);
-    hidden_command("cmd")
-        .args(["/c", &bat.display().to_string()])
-        .spawn()
-        .ok();
+    let mut cmd = hidden_command("cmd");
+    cmd.env("SAD_UNINSTALL_EXE", &self_exe);
+    if let Some(dir) = dedicated_dir {
+        cmd.env("SAD_UNINSTALL_DIR", dir);
+    } else {
+        cmd.env_remove("SAD_UNINSTALL_DIR");
+    }
+    cmd.args(["/c", &bat.display().to_string()]).spawn().ok();
     std::process::exit(0);
 }
 
@@ -704,8 +730,8 @@ pub fn sanitize_nickname(raw: &str) -> String {
 }
 
 pub fn nickname_valid(raw: &str) -> bool {
-    let n = sanitize_nickname(raw);
-    n.len() >= 3 && n.len() <= 16
+    let len = sanitize_nickname(raw).chars().count();
+    (3..=16).contains(&len)
 }
 
 #[cfg(windows)]
@@ -924,5 +950,17 @@ mod unix_tests {
     fn desktop_exec_is_quoted() {
         let p = std::path::Path::new("/home/a b/$x\"y");
         assert_eq!(super::unix::desktop_quote(p), "\"/home/a b/\\$x\\\"y\"");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cyrillic_nicknames_count_chars_not_bytes() {
+        assert!(!super::nickname_valid("Ян"));
+        assert!(super::nickname_valid("Абв"));
+        assert!(super::nickname_valid("Александр"));
+        assert!(super::nickname_valid("ШестнадцатьСимво"));
+        assert!(!super::nickname_valid("!!!"));
     }
 }

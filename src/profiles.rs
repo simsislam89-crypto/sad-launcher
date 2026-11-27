@@ -46,6 +46,9 @@ pub struct Profile {
     pub pack_version: String,
     #[serde(default)]
     pub pack_date: String,
+    /// Optional custom folder for this build; empty = default `profiles/<id>`.
+    #[serde(default)]
+    pub custom_dir: String,
 }
 
 /// Which version of a pack a build holds.
@@ -75,8 +78,22 @@ impl Profile {
             pack_file: String::new(),
             pack_version: String::new(),
             pack_date: String::new(),
+            custom_dir: String::new(),
         }
     }
+}
+
+/// Custom folder configured for `profile_id`, if any.
+pub fn custom_dir_for(profile_id: &str) -> Option<String> {
+    let id = profile_id.trim();
+    if id.is_empty() {
+        return None;
+    }
+    load_profiles()
+        .into_iter()
+        .find(|p| p.id == id)
+        .map(|p| p.custom_dir.trim().to_string())
+        .filter(|d| !d.is_empty())
 }
 
 #[derive(Debug, Clone)]
@@ -208,6 +225,7 @@ pub fn create_custom_profile(
     mc_version: &str,
     loader: &str,
     description: &str,
+    custom_dir: &str,
 ) -> Result<Profile> {
     let name_clean = name.trim();
     if name_clean.is_empty() {
@@ -236,11 +254,58 @@ pub fn create_custom_profile(
         pack_file: String::new(),
         pack_version: String::new(),
         pack_date: String::new(),
+        custom_dir: custom_dir.trim().to_string(),
     };
-    std::fs::create_dir_all(profile_mods_dir(cfg, &id))?;
     profiles.push(profile.clone());
     save_profiles(&profiles)?;
+    std::fs::create_dir_all(profile_mods_dir(cfg, &id))?;
     Ok(profile)
+}
+
+/// Ensures each launched Minecraft version has its own isolated build folder.
+pub fn upsert_version_profile(cfg: &Config, spec: &Spec, version_id: &str) -> Result<Profile> {
+    let source = format!("version:{}", version_id.trim());
+    let mut profiles = load_profiles();
+    if let Some(existing) = profiles
+        .iter()
+        .find(|p| p.kind == ProfileKind::Custom && p.source == source)
+        .cloned()
+    {
+        std::fs::create_dir_all(profile_mods_dir(cfg, &existing.id))?;
+        return Ok(existing);
+    }
+    let id = unique_id(&profiles, &format!("ver-{}", sanitize_id(version_id)));
+    let profile = Profile {
+        id: id.clone(),
+        name: spec.title(),
+        kind: ProfileKind::Custom,
+        mc_version: spec.mc.clone(),
+        loader: spec.loader.id().to_string(),
+        loader_version: spec.version.clone(),
+        description: format!("Папка версии {}", spec.title()),
+        created_at: crate::util::file_stamp(),
+        source,
+        pack_file: String::new(),
+        pack_version: String::new(),
+        pack_date: String::new(),
+        custom_dir: String::new(),
+    };
+    profiles.push(profile.clone());
+    save_profiles(&profiles)?;
+    std::fs::create_dir_all(profile_mods_dir(cfg, &id))?;
+    Ok(profile)
+}
+
+/// Updates the folder where a build stores its mods, worlds, saves and configs.
+pub fn set_profile_dir(cfg: &Config, profile_id: &str, custom_dir: &str) -> Result<()> {
+    let mut profiles = load_profiles();
+    let Some(p) = profiles.iter_mut().find(|p| p.id == profile_id) else {
+        bail!("Сборка не найдена: {profile_id}");
+    };
+    p.custom_dir = custom_dir.trim().to_string();
+    save_profiles(&profiles)?;
+    std::fs::create_dir_all(profile_mods_dir(cfg, profile_id))?;
+    Ok(())
 }
 
 /// The build of a modpack. The same pack installed again reuses its build:
@@ -287,6 +352,7 @@ pub fn upsert_modpack_profile(
                 pack_file: stamp.file.clone(),
                 pack_version: stamp.version.clone(),
                 pack_date: stamp.date.clone(),
+                custom_dir: String::new(),
             };
             profiles.push(p.clone());
             p
@@ -308,7 +374,14 @@ fn clear_for_reinstall(dir: &Path) {
         if KEEP.contains(&name.as_str()) {
             continue;
         }
-        crate::remove::queue("Старые файлы пака", &entry.path());
+        let path = entry.path();
+        if !crate::remove::try_trash(&path) {
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(&path);
+            } else {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
     }
 }
 
@@ -566,5 +639,15 @@ mod tests {
         assert_eq!(cfg.instance_dir_for("default"), cfg.game_dir());
         assert_eq!(cfg.instance_dir_for(""), cfg.game_dir());
         assert_eq!(cfg.instance_dir_for("pack-x"), profiles_dir().join("pack-x"));
+    }
+
+    #[test]
+    fn custom_profile_has_custom_dir_field() {
+        let mut p = Profile::madrid();
+        assert!(p.custom_dir.is_empty());
+        p.custom_dir = "D:\\Games\\MC-1201".into();
+        let json = serde_json::to_string(&p).unwrap();
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.custom_dir, "D:\\Games\\MC-1201");
     }
 }

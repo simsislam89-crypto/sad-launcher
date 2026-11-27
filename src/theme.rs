@@ -167,14 +167,12 @@ pub fn install(ctx: &egui::Context) {
     }
 
     // Cyrillic fallback and UI glyphs come from egui's bundled faces.
-    if let Some(list) = fonts.families.get(&FontFamily::Name(FAM_DISPLAY.into())) {
-        if list.is_empty() {
-            fonts
-                .families
-                .entry(FontFamily::Name(FAM_DISPLAY.into()))
-                .or_default()
-                .push("Ubuntu-Light".into());
-        }
+    let display = fonts
+        .families
+        .entry(FontFamily::Name(FAM_DISPLAY.into()))
+        .or_default();
+    if display.is_empty() {
+        display.push("Ubuntu-Light".into());
     }
     ctx.set_fonts(fonts);
 }

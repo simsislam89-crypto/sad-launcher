@@ -742,26 +742,23 @@ fn hit_card(
     busy: bool,
     appear: f32,
 ) -> (bool, bool, bool) {
-    let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.16);
-    let lift = theme::travel(10.0) * (1.0 - appear) - theme::travel(2.0) * hover;
-    // Scale: arrives from 96 %, grows 1.5 % under the pointer, sinks 1 %
-    // while pressed — the tile answers before anything loads.
-    let press = ui.ctx().animate_bool_with_time(resp.id.with("press"), resp.is_pointer_button_down_on(), 0.08);
-    let scale = if theme::reduced_motion() {
-        1.0
+    let hover = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.14);
+    let lift = if theme::reduced_motion() {
+        0.0
     } else {
-        0.96 + 0.04 * appear + 0.015 * hover - 0.01 * press
+        let raw = theme::travel(6.0) * (1.0 - appear) - theme::travel(2.0) * hover;
+        if raw.abs() < 0.05 { 0.0 } else { raw }
     };
-    let rect = Rect::from_center_size(slot.center(), slot.size() * scale).translate(Vec2::new(0.0, lift));
+    let rect = slot.translate(Vec2::new(0.0, lift));
     let mut p = ui.painter().clone();
-    p.multiply_opacity(0.15 + 0.85 * appear);
+    p.multiply_opacity(0.25 + 0.75 * appear);
 
     if hover > 0.01 {
         let shadow = egui::Shadow {
-            offset: [0, 8],
-            blur: 22,
+            offset: [0, 6],
+            blur: 18,
             spread: 0,
-            color: egui::Color32::from_black_alpha((110.0 * hover) as u8),
+            color: egui::Color32::from_black_alpha((90.0 * hover) as u8),
         };
         p.add(shadow.as_shape(rect, CornerRadius::same(14)));
     }
@@ -781,12 +778,12 @@ fn hit_card(
     }
 
     let cell_w = slot.width();
-    // Icon grows 3% under the pointer — the tile answers before the click.
-    let side = (cell_w - 24.0) * (1.0 + 0.03 * hover);
-    let irect = Rect::from_center_size(Pos2::new(rect.center().x, rect.top() + 12.0 + 60.0), Vec2::new(side, 120.0 * (1.0 + 0.03 * hover)));
+    let irect = Rect::from_min_size(
+        Pos2::new(rect.left() + 12.0, rect.top() + 12.0),
+        Vec2::new(cell_w - 24.0, 120.0),
+    );
+    let fade = ui.ctx().animate_bool_with_time(resp.id.with("img"), icon.is_some(), 0.20);
     if let Some(tex) = icon {
-        // Icons fade in as they arrive instead of popping.
-        let fade = ui.ctx().animate_bool_with_time(resp.id.with("img"), true, 0.25);
         p.image(
             tex.id(),
             irect,
@@ -880,16 +877,10 @@ fn hit_card(
 /// versions and compatibility with the active build.
 fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: bool) {
     let ctx = ui.ctx().clone();
-    let t = theme::arrive(&ctx, app.detail_at, 0.0, 0.30);
-    ui.multiply_opacity(0.3 + 0.7 * t);
-    let shift = theme::travel(28.0) * (1.0 - t);
-    let full = ui.max_rect();
-    let mut panel = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(full.translate(Vec2::new(shift, 0.0)))
-            .layout(Layout::top_down(Align::Min)),
-    );
-    let ui = &mut panel;
+    let t = theme::arrive(&ctx, app.detail_at, 0.0, 0.24);
+    if t < 1.0 {
+        ui.multiply_opacity(0.35 + 0.65 * t);
+    }
     let mut back = ui.input(|i| i.key_pressed(egui::Key::Escape));
     let body_state = app.detail_body.clone();
     let detail = body_state.as_ref().and_then(|r| r.as_ref().ok()).cloned();
@@ -1100,7 +1091,9 @@ fn draw_detail(app: &mut Launcher, ui: &mut Ui, skin: &Skin, hit: ModHit, busy: 
                 format!("https://www.curseforge.com/projects/{}", hit.id)
             }
         });
-        let _ = open::that_detached(&url);
+        if url.starts_with("https://") || url.starts_with("http://") {
+            let _ = open::that_detached(&url);
+        }
     }
 }
 

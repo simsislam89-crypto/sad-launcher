@@ -137,7 +137,7 @@ impl Launcher {
                 widgets::status_dot(ui, if pomme_ready { skin.green() } else { skin.faint() }, pomme_ready);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.label(RichText::new("Pomme · Minecraft на Rust + Vulkan").font(theme::body(13.0)).color(skin.ink()));
+                    ui.label(RichText::new("Pomme · внешний клиент на Rust + Vulkan").font(theme::body(13.0)).color(skin.ink()));
                     ui.label(
                         RichText::new(if pomme_ready {
                             "без Java и без сервера: открывает последний мир сразу"
@@ -225,9 +225,11 @@ impl Launcher {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                widgets::section_label(ui, skin, &format!("УСТАНОВЛЕНЫ · {}", installed.len()));
+                let visible: Vec<&InstalledVersion> =
+                    installed.iter().filter(|v| !v.base_only).collect();
+                widgets::section_label(ui, skin, &format!("УСТАНОВЛЕНЫ · {}", visible.len()));
                 ui.add_space(4.0);
-                if installed.is_empty() {
+                if visible.is_empty() {
                     widgets::empty_state(
                         ui,
                         skin,
@@ -236,7 +238,7 @@ impl Launcher {
                         "Нажмите «Играть» выше — нужная версия скачается сама.",
                     );
                 } else {
-                    for v in &installed {
+                    for v in visible {
                         let is_confirm = confirm.as_deref() == Some(v.id.as_str());
                         let fits = compatible.as_deref() == Some(v.id.as_str());
                         let (play, folder, delete) = installed_row(ui, skin, v, is_confirm, fits);
@@ -334,8 +336,18 @@ impl Launcher {
             self.start_install(ui.ctx(), s, false);
         }
         if let Some(id) = play_req {
+            let (loader, mc, lv) = minecraft::describe_version(&self.cfg.game_dir(), &id);
+            let spec = Spec::new(&mc, loader, &lv);
+            match crate::profiles::upsert_version_profile(&self.cfg, &spec, &id) {
+                Ok(p) => {
+                    self.cfg.active_profile = p.id;
+                    self.cfg.loader = loader.id().to_string();
+                }
+                Err(e) => self.toast(format!("Не удалось создать папку сборки: {e}")),
+            }
             self.cfg.selected_version = id;
             self.save_cfg();
+            self.touch_mods();
             self.launch_to(None);
         }
         if let Some(dir) = folder_req {

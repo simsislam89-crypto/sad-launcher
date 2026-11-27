@@ -80,7 +80,7 @@ impl Launcher {
                 {
                     let _ = open::that_detached(crate::config::SITE_URL);
                 }
-                if widgets::button(ui, skin, "Папка игры", Btn::Ghost, true).clicked() {
+                if widgets::button(ui, skin, "Папка сборки", Btn::Ghost, true).clicked() {
                     open_game = true;
                 }
             },
@@ -577,7 +577,9 @@ impl Launcher {
             self.start_java_download(ui.ctx(), required);
         }
         if open_game {
-            util::open_path(&self.cfg.game_dir());
+            let dir = self.cfg.instance_dir();
+            let _ = std::fs::create_dir_all(&dir);
+            util::open_path(&dir);
         }
         if let Some(target) = switch_profile_id {
             match crate::profiles::switch_profile(&mut self.cfg, &target) {

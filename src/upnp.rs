@@ -139,8 +139,12 @@ fn tag<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
         let end = rest.find('>')?;
         let head = &rest[..end];
         let local = head.split_whitespace().next().unwrap_or("");
+        let local = local.trim_end_matches('/');
         let local = local.rsplit(':').next().unwrap_or(local);
         if local == name && !head.starts_with('/') {
+            if head.trim_end().ends_with('/') {
+                return Some("");
+            }
             let body = &rest[end + 1..];
             let close = body.find("</")?;
             return Some(body[..close].trim());
@@ -153,15 +157,16 @@ fn tag<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
 pub fn parse_description(location: &str, xml: &str) -> Option<Gateway> {
     let base = tag(xml, "URLBase")
         .map(|s| s.trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
         .unwrap_or_else(|| {
             let after = location.split_once("://").unwrap_or(("http", location));
             let host = after.1.split('/').next().unwrap_or("");
             format!("{}://{}", after.0, host)
         });
     for chunk in xml.split("<service>").skip(1) {
-        let st = tag(chunk, "serviceType")?;
+        let Some(st) = tag(chunk, "serviceType") else { continue };
         if st.contains("WANIPConnection") || st.contains("WANPPPConnection") {
-            let ctrl = tag(chunk, "controlURL")?;
+            let Some(ctrl) = tag(chunk, "controlURL") else { continue };
             let control_url = if ctrl.starts_with("http") {
                 ctrl.to_string()
             } else {
@@ -292,6 +297,27 @@ mod tests {
         assert!(is_unreachable_ip("10.0.0.1"));
         assert!(!is_unreachable_ip("93.184.216.34"));
         assert!(!is_unreachable_ip("100.128.0.1"));
+    }
+
+    #[test]
+    fn parses_description_with_self_closing_and_unrelated_service() {
+        let xml = r#"
+        <root>
+            <URLBase/>
+            <device>
+                <serviceList>
+                    <service>
+                        <serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType>
+                    </service>
+                    <service>
+                        <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+                        <controlURL>/ctl/IPConn</controlURL>
+                    </service>
+                </serviceList>
+            </device>
+        </root>"#;
+        let gw = parse_description("http://192.168.1.1:5000/rootDesc.xml", xml).unwrap();
+        assert_eq!(gw.control_url, "http://192.168.1.1:5000/ctl/IPConn");
     }
 }
 

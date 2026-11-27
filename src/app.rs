@@ -774,9 +774,12 @@ pub struct Launcher {
     pub build_new_name: String,
     pub build_new_mc: String,
     pub build_new_loader: String,
+    pub build_new_dir: String,
     pub build_creating: bool,
     pub build_search: String,
     pub build_confirm_del: Option<String>,
+    pub server_port_buf: String,
+    pub server_mem_saved: u32,
     /// Live download speed (global byte counter, smoothed).
     pub speed: net::SpeedMeter,
     /// Modpack size/count by `source:id`.
@@ -921,7 +924,7 @@ impl Launcher {
 
     /// Forces the installed-mods list to re-read on the next frame.
     pub fn touch_mods(&mut self) {
-        self.mods_at = Instant::now() - Duration::from_secs(3);
+        self.mods_at = Instant::now().checked_sub(Duration::from_secs(3)).unwrap_or_else(Instant::now);
         self.mods_stamp = None;
     }
 
@@ -1235,6 +1238,7 @@ impl Launcher {
         let (pack_info_tx, pack_info_rx) = std::sync::mpsc::channel();
         let init_host_port = cfg.host_port.to_string();
         let init_friend_port = cfg.server_port.to_string();
+        let init_server_mem = cfg.server_memory_mb;
         let initial_effects = crate::effects::load();
         let automation = crate::automation::AutomationHandle::start(
             shared.clone(),
@@ -1285,13 +1289,13 @@ impl Launcher {
             icon_tx,
             icon_rx,
             mods_cache: Vec::new(),
-            mods_at: Instant::now() - Duration::from_secs(3),
+            mods_at: Instant::now().checked_sub(Duration::from_secs(3)).unwrap_or_else(Instant::now),
             mods_stamp: None,
             mods_full_at: Instant::now(),
             update_checked_at: Instant::now(),
             storage_bytes: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             storage_busy: Arc::new(AtomicBool::new(false)),
-            storage_at: Instant::now() - Duration::from_secs(5),
+            storage_at: Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now),
             lan_ip: server::local_ip(),
             build: mods::load_build(),
             mods_page: 0,
@@ -1312,7 +1316,7 @@ impl Launcher {
             public_ip_cached: None,
             public_ip_fetching: false,
             friend_code: String::new(),
-            friend_port: init_friend_port,
+            friend_port: init_friend_port.clone(),
             friend_state: None,
             update_info: None,
             update_rx: None,
@@ -1344,9 +1348,12 @@ impl Launcher {
             build_new_name: String::new(),
             build_new_mc: crate::config::MADRID_MC.to_string(),
             build_new_loader: "forge".to_string(),
+            build_new_dir: String::new(),
             build_creating: false,
             build_search: String::new(),
             build_confirm_del: None,
+            server_port_buf: init_friend_port,
+            server_mem_saved: init_server_mem,
             speed: net::SpeedMeter::default(),
             pack_info: crate::packinfo::load_cache(),
             pack_info_busy: HashSet::new(),
@@ -2423,7 +2430,6 @@ impl Launcher {
                 } else {
                     self.toast("Minecraft запускается");
                 }
-                self.was_running = true;
             }
             Err(e) => {
                 let err = format!("Не удалось запустить игру: {e:#}");
@@ -2455,7 +2461,7 @@ impl Launcher {
                 self.save_cfg();
                 self.refresh_installed();
                 self.touch_mods();
-                self.storage_at = Instant::now() - Duration::from_secs(5);
+                self.storage_at = Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now);
                 self.build_selected_id.clear();
                 self.toast(format!("Удаляю сборок: {} · версий: {}", s.builds, s.versions));
             }
@@ -3761,7 +3767,7 @@ impl Launcher {
             self.remove_seen = seen;
             self.refresh_installed();
             self.touch_mods();
-            self.storage_at = Instant::now() - Duration::from_secs(5);
+            self.storage_at = Instant::now().checked_sub(Duration::from_secs(5)).unwrap_or_else(Instant::now);
         }
         match crate::remove::progress() {
             Some(p) => {
@@ -3804,6 +3810,9 @@ impl Launcher {
             .done_at
             .map(|t| 1.0 - theme::ease_out(((t.elapsed().as_secs_f32() - 1.8) / 0.5).max(0.0)))
             .unwrap_or(1.0);
+        if enter < 1.0 || (card.done_at.is_some() && exit < 1.0) {
+            ctx.request_repaint();
+        }
         let vis = enter * exit;
         if vis <= 0.001 {
             return;
@@ -3815,14 +3824,16 @@ impl Launcher {
             Pos2::new(screen.right() - size.x - 22.0, screen.bottom() - size.y - 22.0),
             size,
         );
-        let scale = if theme::reduced_motion() { 1.0 } else { 0.92 + 0.08 * vis };
-        let c = rect.center().to_vec2();
-        ctx.set_transform_layer(
-            layer,
+        let scale = if theme::reduced_motion() || vis >= 0.999 { 1.0 } else { 0.92 + 0.08 * vis };
+        let xform = if (scale - 1.0).abs() < 0.0005 {
+            egui::emath::TSTransform::IDENTITY
+        } else {
+            let c = rect.center().to_vec2();
             egui::emath::TSTransform::from_translation(c)
                 * egui::emath::TSTransform::from_scaling(scale)
-                * egui::emath::TSTransform::from_translation(-c),
-        );
+                * egui::emath::TSTransform::from_translation(-c)
+        };
+        ctx.set_transform_layer(layer, xform);
         let mut painter = ctx.layer_painter(layer);
         painter.multiply_opacity(vis);
         painter.add(
@@ -4091,14 +4102,16 @@ impl Launcher {
         let size = Vec2::new(480.0, 470.0).min(screen.size() - Vec2::splat(40.0));
         let rect = Rect::from_center_size(screen.center(), size);
         let layer = egui::LayerId::new(egui::Order::Tooltip, Id::unique("about-card"));
-        let scale = if theme::reduced_motion() { 1.0 } else { 0.94 + 0.06 * t };
-        let c = rect.center().to_vec2();
-        ctx.set_transform_layer(
-            layer,
+        let scale = if theme::reduced_motion() || t >= 0.999 { 1.0 } else { 0.94 + 0.06 * t };
+        let xform = if (scale - 1.0).abs() < 0.0005 {
+            egui::emath::TSTransform::IDENTITY
+        } else {
+            let c = rect.center().to_vec2();
             egui::emath::TSTransform::from_translation(c)
                 * egui::emath::TSTransform::from_scaling(scale)
-                * egui::emath::TSTransform::from_translation(-c),
-        );
+                * egui::emath::TSTransform::from_translation(-c)
+        };
+        ctx.set_transform_layer(layer, xform);
         let data = config::data_dir();
         let game = self.cfg.game_dir();
         let logs = data.join("logs");
@@ -4790,13 +4803,10 @@ impl Launcher {
             })
             .show(&mut content_ui, |ui| {
                 ui.set_width(ui.available_width());
-                // Page change: content settles in from 10 px below while it
-                // brightens — starts already visible, never a blank frame.
-                let appear = theme::arrive(&ctx, self.tab_at, 0.0, 0.24);
-                ui.multiply_opacity(0.35 + 0.65 * appear);
-                let rise = theme::travel(10.0) * (1.0 - appear);
-                if rise > 0.05 {
-                    ui.add_space(rise);
+                // Page change: crisp fade-in without layout vertical jitter.
+                let appear = theme::arrive(&ctx, self.tab_at, 0.0, 0.20);
+                if appear < 1.0 {
+                    ui.multiply_opacity(0.35 + 0.65 * appear);
                 }
                 match self.tab {
                     Tab::Play => self.view_play(ui, &skin),

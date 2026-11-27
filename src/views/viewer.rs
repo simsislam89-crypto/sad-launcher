@@ -227,6 +227,13 @@ impl Launcher {
                 }
             });
 
+        if close {
+            self.viewer = None;
+            self.video_state = None;
+            self.video_request = None;
+            ctx.request_repaint();
+            return;
+        }
         if let Media::Video(id) = &current {
             if video_error.is_none() {
                 self.video_request = Some((id.clone(), media));
@@ -238,10 +245,6 @@ impl Launcher {
                     self.video_state = None;
                 }
             }
-        }
-        if close {
-            self.viewer = None;
-            self.video_state = None;
         }
         if !video_ready && matches!(current, Media::Video(_)) && video_error.is_none() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));

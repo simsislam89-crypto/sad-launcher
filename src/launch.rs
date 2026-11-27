@@ -296,6 +296,7 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
     {
         let shared = shared.clone();
         let log_path_watch = log_path.clone();
+        let launched_mods_dir = cfg.mods_dir();
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(400));
             let mut guard = match shared.game.lock() {
@@ -305,29 +306,28 @@ pub fn launch(shared: &Arc<Shared>, cfg: &Config, id: &str, connect: Option<&str
             let Some(child) = guard.as_mut() else {
                 break;
             };
+            if child.id() != spawned_pid {
+                break;
+            }
             match child.try_wait() {
                 Ok(Some(status)) => {
+                    *guard = None;
                     drop(guard);
                     shared.game_running.store(false, Ordering::SeqCst);
                     shared.set_game_pid(0);
                     shared.push_game(format!("[Madrid] Игра завершилась · {status}"));
                     if status.code() == Some(1) {
-                        heal_broken_mod(shared.clone(), &log_path_watch);
-                    }
-                    if let Ok(mut g) = shared.game.lock() {
-                        *g = None;
+                        heal_broken_mod(shared.clone(), &log_path_watch, &launched_mods_dir);
                     }
                     break;
                 }
                 Ok(None) => {}
                 Err(e) => {
+                    *guard = None;
                     drop(guard);
                     shared.game_running.store(false, Ordering::SeqCst);
                     shared.set_game_pid(0);
                     shared.push_game(format!("[Madrid] Ошибка процесса: {e}"));
-                    if let Ok(mut g) = shared.game.lock() {
-                        *g = None;
-                    }
                     break;
                 }
             }
@@ -353,9 +353,11 @@ pub fn ready_to_launch(cfg: &Config, id: &str) -> bool {
 
 pub fn stop(shared: &Arc<Shared>) -> bool {
     if let Ok(mut guard) = shared.game.lock() {
-        if let Some(child) = guard.as_mut() {
+        if let Some(mut child) = guard.take() {
             let _ = child.kill();
+            let _ = child.wait();
             shared.game_running.store(false, Ordering::SeqCst);
+            shared.set_game_pid(0);
             shared.push_game("[Madrid] Остановлено пользователем");
             return true;
         }
@@ -488,9 +490,17 @@ fn build_args(_shared: &Arc<Shared>, cfg: &Config, resolved: &Resolved, connect:
         out.push(subst(&arg, &map));
     }
 
+    let mc_ver = resolved
+        .client_jar
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| crate::loader::parse_version_id(&resolved.id).1);
+
     // Live tests only (`MADRID_DEV_WORLD=<world>`): straight into a
     // singleplayer world, where debug keys such as F3+T work.
-    if connect.is_none() && mc_release(&resolved.id) >= (1, 20) {
+    if connect.is_none() && mc_release(&mc_ver) >= (1, 20) {
         if let Some(world) = std::env::var("MADRID_DEV_WORLD").ok().filter(|w| !w.trim().is_empty()) {
             out.push("--quickPlaySingleplayer".into());
             out.push(world);
@@ -502,7 +512,7 @@ fn build_args(_shared: &Arc<Shared>, cfg: &Config, resolved: &Resolved, connect:
     if let Some(addr) = connect {
         let trimmed = addr.trim().to_string();
         if !trimmed.is_empty() {
-            if mc_release(&resolved.id) >= (1, 20) {
+            if mc_release(&mc_ver) >= (1, 20) {
                 out.push("--quickPlayMultiplayer".into());
                 out.push(trimmed);
             } else {
@@ -540,43 +550,58 @@ fn fix_ignore_list(arg: String, jar_name: &str) -> String {
     format!("{arg},{jar_name}")
 }
 
-/// (major, minor) release of a version id like `1.20.1-forge-47.3.0`.
+/// (major, minor) release of a version id like `1.20.1-forge-47.3.0`
+/// or `fabric-loader-0.15.3-1.20.1`.
 fn mc_release(id: &str) -> (u32, u32) {
-    let base = id.split('-').next().unwrap_or(id);
+    let (_, mc, _) = crate::loader::parse_version_id(id);
+    let base = mc.split('-').next().unwrap_or(&mc);
     let mut parts = base.split('.');
     let a = parts.next().and_then(|p| p.parse().ok()).unwrap_or(1);
     let b = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
     (a, b)
 }
 
-/// A new build starts without the FPS caps vanilla ships with: vsync off and
-/// «Макс. FPS» unlimited (260). Only when options.txt does not exist yet —
-/// whatever the player set in the game is never touched.
+/// A new build starts without the FPS caps vanilla ships with: vsync off,
+/// «Макс. FPS» unlimited (260), and semi-blocking chunk updates so nearby
+/// chunks render immediately without holes. Only when options.txt does not
+/// exist yet — whatever the player set in the game is never touched.
 fn fps_defaults(instance: &Path) {
     let options = instance.join("options.txt");
     if options.exists() {
         return;
     }
     let _ = std::fs::create_dir_all(instance);
-    let _ = std::fs::write(options, "enableVsync:false\nmaxFps:260\n");
+    let _ = std::fs::write(options, "enableVsync:false\nmaxFps:260\nprioritizeChunkUpdates:1\n");
 }
 
-/// JVM flags for the game client: G1 tuned for short pauses (no frame
-/// spikes), a big code cache for modded JIT, no perf-data file writes.
-/// Unlike the server, no AlwaysPreTouch: it delays the first frame by
-/// seconds on big heaps for no FPS gain.
+/// JVM flags for the game client: low-latency G1 tuned for smooth frame
+/// pacing and fast chunk mesh building without server-style pauses.
 pub fn client_flags(mem_mb: u64) -> Vec<String> {
-    let mut flags: Vec<String> = perf_gc_flags(mem_mb)
-        .into_iter()
-        .filter(|f| f != "-XX:+AlwaysPreTouch")
-        .collect();
-    flags.extend([
-        "-XX:+UseStringDeduplication".to_string(),
-        "-XX:ReservedCodeCacheSize=400M".to_string(),
-        "-XX:-UsePerfData".to_string(),
-        "-XX:+PerfDisableSharedMem".to_string(),
-    ]);
-    flags
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .max(2);
+    let parallel = (cores / 2).clamp(2, 8);
+    let conc = (parallel / 4).clamp(1, 2);
+    let region = if mem_mb >= 8192 { "32M" } else { "16M" };
+    vec![
+        "-XX:+UnlockExperimentalVMOptions".into(),
+        "-XX:+UseG1GC".into(),
+        "-XX:MaxGCPauseMillis=30".into(),
+        "-XX:G1NewSizePercent=20".into(),
+        "-XX:G1MaxNewSizePercent=35".into(),
+        format!("-XX:G1HeapRegionSize={region}"),
+        "-XX:G1ReservePercent=15".into(),
+        "-XX:InitiatingHeapOccupancyPercent=20".into(),
+        "-XX:G1MixedGCCountTarget=4".into(),
+        "-XX:+ParallelRefProcEnabled".into(),
+        "-XX:+DisableExplicitGC".into(),
+        format!("-XX:ParallelGCThreads={parallel}"),
+        format!("-XX:ConcGCThreads={conc}"),
+        "-XX:ReservedCodeCacheSize=400M".into(),
+        "-XX:-UsePerfData".into(),
+        "-XX:+PerfDisableSharedMem".into(),
+    ]
 }
 
 /// Aikar-style G1 tuning scaled to the machine: short pauses, all cores
@@ -813,7 +838,7 @@ pub fn preflight_mods(mods_dir: &Path, loader: crate::loader::Loader) -> Vec<Str
 /// When ModLauncher dies with `Provider ... not found`, the jar that carries
 /// that provider is broken or from another loader — disable it automatically
 /// so the next Играть has a chance to boot.
-fn heal_broken_mod(shared: Arc<Shared>, log_path: &Path) {
+fn heal_broken_mod(shared: Arc<Shared>, log_path: &Path, mods_dir: &Path) {
     use std::io::BufRead;
     let Ok(file) = std::fs::File::open(log_path) else {
         return;
@@ -835,9 +860,9 @@ fn heal_broken_mod(shared: Arc<Shared>, log_path: &Path) {
             if let Some(idx) = text.find("Mod candidate ") {
                 let rest = &text[idx + 14..];
                 if let Some(end) = rest.find(" contains a corrupt") {
-                    let jar = rest[..end].trim().to_string();
-                    let mods_dir = crate::config::load().mods_dir();
-                    if mods_dir.join(&jar).is_file()
+                    let jar = crate::mods::sanitize(rest[..end].trim());
+                    if !jar.is_empty()
+                        && mods_dir.join(&jar).is_file()
                         && std::fs::rename(mods_dir.join(&jar), mods_dir.join(format!("{jar}.disabled"))).is_ok()
                     {
                         shared.push_game(format!("[Madrid] Мод {jar} повреждён или не для этого загрузчика — он отключён. Нажми «Играть» снова."));
@@ -848,9 +873,8 @@ fn heal_broken_mod(shared: Arc<Shared>, log_path: &Path) {
         return;
     }
     let needle = provider.replace('.', "/");
-    let mods_dir = crate::config::load().mods_dir();
     let mut culprit = String::new();
-    if let Ok(entries) = std::fs::read_dir(&mods_dir) {
+    if let Ok(entries) = std::fs::read_dir(mods_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if !path.is_file() || !path.extension().map(|e| e == "jar").unwrap_or(false) {
@@ -985,6 +1009,16 @@ x = 1
         let f = client_flags(8192);
         assert!(!f.iter().any(|x| x == "-XX:+AlwaysPreTouch"));
         assert!(f.iter().any(|x| x == "-XX:+UseG1GC"));
+    }
+
+    #[test]
+    fn mc_release_handles_all_loader_ids() {
+        assert_eq!(mc_release("1.20.1-forge-47.4.10"), (1, 20));
+        assert_eq!(mc_release("fabric-loader-0.15.3-1.20.1"), (1, 20));
+        assert_eq!(mc_release("quilt-loader-0.20.0-1.21.1"), (1, 21));
+        assert_eq!(mc_release("neoforge-21.1.77"), (1, 21));
+        assert_eq!(mc_release("26.3"), (26, 3));
+        assert_eq!(mc_release("1.19.4"), (1, 19));
     }
 
     /// Starts the installed Madrid Forge build and waits until Forge has

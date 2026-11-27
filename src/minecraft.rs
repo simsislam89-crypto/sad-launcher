@@ -147,6 +147,8 @@ pub struct InstalledVersion {
     pub loader_version: String,
     pub size: u64,
     pub has_jar: bool,
+    /// Vanilla folder installed solely as a parent for a modloader version.
+    pub base_only: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -189,6 +191,7 @@ pub fn installed_versions(cfg: &Config) -> Vec<InstalledVersion> {
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return out;
     };
+    let mut raw: Vec<(InstalledVersion, bool)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -201,6 +204,7 @@ pub fn installed_versions(cfg: &Config) -> Vec<InstalledVersion> {
         if !json.exists() {
             continue;
         }
+        let has_marker = read_marker(&game, &id).is_some();
         let (loader, mc, loader_version) = describe_version(&game, &id);
         let jar = path.join(format!("{id}.jar"));
         let has_jar = jar.exists();
@@ -208,14 +212,27 @@ pub fn installed_versions(cfg: &Config) -> Vec<InstalledVersion> {
         if let Ok(m) = std::fs::metadata(&jar) {
             size += m.len();
         }
-        out.push(InstalledVersion {
-            id,
-            loader: loader.id().to_string(),
-            mc,
-            loader_version,
-            size,
-            has_jar,
-        });
+        raw.push((
+            InstalledVersion {
+                id,
+                loader: loader.id().to_string(),
+                mc,
+                loader_version,
+                size,
+                has_jar,
+                base_only: false,
+            },
+            has_marker,
+        ));
+    }
+    let modded_mcs: std::collections::HashSet<String> = raw
+        .iter()
+        .filter(|(v, _)| v.loader != "vanilla" && !v.mc.is_empty())
+        .map(|(v, _)| v.mc.clone())
+        .collect();
+    for (mut v, has_marker) in raw {
+        v.base_only = v.loader == "vanilla" && !has_marker && modded_mcs.contains(&v.mc);
+        out.push(v);
     }
     out.sort_by(|a, b| b.mc.cmp(&a.mc).then(b.id.cmp(&a.id)));
     out
@@ -473,7 +490,8 @@ pub async fn install<F: FnMut(InstallEvent) + Send>(
     if mc.is_empty() {
         bail!("Не указана версия Minecraft");
     }
-    let version = install_vanilla(client, &game, mc, cancel, on).await?;
+    let is_base = spec.loader != Loader::Vanilla;
+    let version = install_vanilla(client, &game, mc, is_base, cancel, on).await?;
 
     // Assets (hundreds of MB, network-bound) and Java + the loader (the
     // Forge installer is ~30 s of CPU) do not depend on each other: they
@@ -544,10 +562,16 @@ async fn install_vanilla<F: FnMut(InstallEvent) + Send>(
     client: &reqwest::Client,
     game: &Path,
     mc: &str,
+    is_base: bool,
     cancel: &std::sync::atomic::AtomicBool,
     on: &mut F,
 ) -> Result<VersionJson> {
-    on(InstallEvent::Stage(format!("Minecraft {mc}")));
+    let stage = if is_base {
+        format!("База {mc}")
+    } else {
+        format!("Minecraft {mc}")
+    };
+    on(InstallEvent::Stage(stage));
     let version_dir = game.join("versions").join(mc);
     std::fs::create_dir_all(&version_dir)?;
     let json_path = version_dir.join(format!("{mc}.json"));
@@ -575,12 +599,17 @@ async fn install_vanilla<F: FnMut(InstallEvent) + Send>(
     if let Some(dl) = version.downloads.as_ref().and_then(|d| d.client.as_ref()) {
         let jar = version_dir.join(format!("{mc}.jar"));
         if !jar.exists() {
-            on(InstallEvent::Stage("Клиент Minecraft".into()));
+            let dl_label = if is_base {
+                format!("Базовый клиент {mc}")
+            } else {
+                "Клиент Minecraft".to_string()
+            };
+            on(InstallEvent::Stage(dl_label.clone()));
             let mut report = |done: u64, total: u64| {
                 on(InstallEvent::Progress {
                     done,
                     total,
-                    label: format!("Клиент Minecraft · {}", crate::util::human_bytes(done)),
+                    label: format!("{dl_label} · {}", crate::util::human_bytes(done)),
                 })
             };
             download_file_progress(client, &dl.url, &jar, Some(cancel), &mut report).await?;

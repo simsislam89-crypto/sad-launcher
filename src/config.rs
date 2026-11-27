@@ -108,12 +108,17 @@ impl Config {
         }
     }
 
-    /// Game folder of a build: the default build is the main game folder,
-    /// every other build lives in meta/profiles/{id}. Versions, libraries
-    /// and assets always stay shared in `game_dir()`.
+    /// Game folder of a build: a profile's custom folder wins if set;
+    /// otherwise the default build uses the main game folder and all
+    /// others live in meta/profiles/{id}. Versions, libraries and assets
+    /// always stay shared in `game_dir()`.
     pub fn instance_dir_for(&self, profile_id: &str) -> PathBuf {
         let id = profile_id.trim();
-        if id.is_empty() || id == "default" {
+        let id = if id.is_empty() { "default" } else { id };
+        if let Some(custom) = crate::profiles::custom_dir_for(id) {
+            return PathBuf::from(custom);
+        }
+        if id == "default" {
             self.game_dir()
         } else {
             data_dir().join("meta").join("profiles").join(id)
@@ -141,11 +146,11 @@ impl Config {
     }
 
     pub fn nickname_or_default(&self) -> String {
-        let n = self.nickname.trim();
-        if n.is_empty() {
+        let clean = crate::util::sanitize_nickname(&self.nickname);
+        if clean.is_empty() {
             "Player".into()
         } else {
-            n.chars().filter(|c| c.is_alphanumeric() || *c == '_').take(16).collect()
+            clean
         }
     }
 }

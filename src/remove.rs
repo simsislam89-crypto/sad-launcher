@@ -70,6 +70,29 @@ fn trash_for(path: &Path) -> PathBuf {
     }
 }
 
+/// Moves `path` to `.trash` and queues the tomb for background deletion.
+/// Returns `false` if `path` still exists and could not be renamed (e.g. locked).
+pub(crate) fn try_trash(path: &Path) -> bool {
+    if !path.exists() {
+        return true;
+    }
+    let trash = trash_for(path);
+    let _ = std::fs::create_dir_all(&trash);
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let tomb = trash.join(format!("{stamp}-{name}"));
+    if std::fs::rename(path, &tomb).is_ok() {
+        lock(&state().queue).push_back(("Старые файлы пака".into(), vec![tomb]));
+        ensure_worker();
+        true
+    } else {
+        false
+    }
+}
+
 /// Moves `path` out of the way instantly and queues it for removal.
 /// Returns false when there was nothing to remove.
 pub fn queue(title: impl Into<String>, path: &Path) -> bool {

@@ -109,7 +109,7 @@ fn ensure_and_start(shared: &Arc<Shared>) -> Result<()> {
 
     let client = minecraft::http_client()?;
 
-    let java = resolve_java(shared, &client, &cfg.java_path, major)?;
+    let java = resolve_java(shared, &client, &cfg.java_path, major, &loader)?;
 
     let build = ensure_server_installed(&client, shared, &cfg, &server, &mc, &loader)?;
 
@@ -126,18 +126,17 @@ fn ensure_and_start(shared: &Arc<Shared>) -> Result<()> {
     spawn_server(shared, &java, &server, &mc, &build, &loader, cfg.server_port)
 }
 
-/// Finds the best Java for `major`; downloads a Temurin JRE when none fits.
+/// Finds the best Java that fits `major` and `loader`; downloads a Temurin JRE when none fits.
 fn resolve_java(
     shared: &Arc<Shared>,
     client: &reqwest::Client,
     custom: &str,
     major: u32,
+    loader: &str,
 ) -> Result<crate::java::JavaInfo> {
-    let current = crate::java::pick_for(custom, major);
-    if let Some(j) = &current {
-        if j.major >= major {
-            return Ok(j.clone());
-        }
+    let parsed_loader = crate::loader::Loader::parse(loader);
+    if let Some(j) = crate::java::pick_fitting(custom, major, parsed_loader) {
+        return Ok(j);
     }
     shared.set_mc_stage(format!("скачиваю Java {major}…"));
     shared.log(
@@ -152,7 +151,7 @@ fn resolve_java(
         crate::java::download_runtime(client, major, &cancel, &mut noop).await
     })?;
     shared.log(LogKind::Info, format!("Java {major} установлена: {path}"));
-    crate::java::pick_for(custom, major)
+    crate::java::pick_fitting(custom, major, parsed_loader)
         .ok_or_else(|| anyhow!("После установки Java {major} она не нашлась"))
 }
 
@@ -177,14 +176,16 @@ fn ensure_server_installed(
     std::fs::create_dir_all(server).context("Не создать папку сервера")?;
     minecraft::prepare_server_dir(server, cfg.server_port);
 
-    let java = resolve_java(shared, client, &cfg.java_path, required_java_major(shared, cfg, mc))?;
+    let java = resolve_java(shared, client, &cfg.java_path, required_java_major(shared, cfg, mc), loader)?;
 
     if loader == "vanilla" {
         let marker = read_marker(server);
         let jar = server.join("minecraft_server.jar");
         if jar.exists() {
             if let Some(m) = marker {
-                return Ok(m.build);
+                if m.mc == mc && m.loader == "vanilla" {
+                    return Ok(m.build);
+                }
             }
         }
         shared.set_mc_stage(format!("Скачивание сервера {mc}…"));
@@ -517,8 +518,10 @@ pub fn stop(shared: &Arc<Shared>) -> bool {
         return false;
     }
     shared.set_mc_stage("останавливается…");
+    let mut child_pid = None;
     let wrote = shared.mc_child.lock().ok().and_then(|mut g| {
         g.as_mut().map(|c| {
+            child_pid = Some(c.id());
             if let Some(stdin) = c.stdin.as_mut() {
                 let _ = stdin.write_all(b"stop\n");
                 let _ = stdin.flush();
@@ -544,7 +547,9 @@ pub fn stop(shared: &Arc<Shared>) -> bool {
             if shared.is_mc_running() {
                 if let Ok(mut guard) = shared.mc_child.lock() {
                     if let Some(c) = guard.as_mut() {
-                        let _ = c.kill();
+                        if Some(c.id()) == child_pid {
+                            let _ = c.kill();
+                        }
                     }
                 }
             }

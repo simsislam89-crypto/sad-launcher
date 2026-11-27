@@ -62,7 +62,7 @@ if [ "$installed" -eq 0 ]; then
   <key>CFBundleName</key><string>Sad Launcher</string>
   <key>CFBundleDisplayName</key><string>Sad Launcher</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.7.0</string>
+  <key>CFBundleShortVersionString</key><string>0.7.10</string>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

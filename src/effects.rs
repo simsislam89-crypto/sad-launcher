@@ -235,14 +235,38 @@ pub const EFFECT_MODS: &[EffectModSpec] = &[
     },
 ];
 
+pub const REPLAY_MOD: EffectModSpec = EffectModSpec {
+    id: "replay",
+    title: "Запись реплеев (Flashback / Replay Mod)",
+    slugs: &["flashback", "replaymod", "reforgedplay-mod"],
+    search_query: "replay mod",
+    patterns: &["flashback", "replaymod", "replay-mod", "reforgedplay"],
+};
+
 pub fn effect_mod_spec(id: &str) -> Option<EffectModSpec> {
-    EFFECT_MODS.iter().copied().find(|s| s.id == id)
+    EFFECT_MODS
+        .iter()
+        .copied()
+        .find(|s| s.id == id)
+        .or_else(|| (id == "replay").then_some(REPLAY_MOD))
+}
+
+pub fn replay_dir(instance: &Path) -> PathBuf {
+    let fb = instance.join("flashback");
+    if fb.is_dir() {
+        fb.join("replays")
+    } else {
+        instance.join("replay_recordings")
+    }
 }
 
 pub fn mc_minor_version(mc: &str) -> u32 {
     let base = mc.split('-').next().unwrap_or(mc);
     let mut parts = base.split('.');
-    let _major = parts.next();
+    let major = parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(1);
+    if major >= 2 {
+        return major;
+    }
     parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(20)
 }
 
@@ -501,9 +525,13 @@ fn png_bytes(img: &RgbaImage) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn transparent_png(size: u32) -> Result<Vec<u8>> {
-    let img = RgbaImage::from_pixel(size, size, Rgba([0, 0, 0, 0]));
+fn transparent_png_wh(w: u32, h: u32) -> Result<Vec<u8>> {
+    let img = RgbaImage::from_pixel(w, h, Rgba([0, 0, 0, 0]));
     png_bytes(&img)
+}
+
+fn transparent_png(size: u32) -> Result<Vec<u8>> {
+    transparent_png_wh(size, size)
 }
 
 fn low_fire_png(soul: bool) -> Result<Vec<u8>> {
@@ -793,8 +821,11 @@ fn pack_files(mc_version: &str, cfg: &EffectsConfig, client_jar: Option<&Path>) 
         }
     }
     if cfg.no_weather {
+        // Vanilla rain.png/snow.png are 64x256 (1:4 sprite sheets); mods like
+        // Particle Rain slice them assuming >=4 vertical frames and crash on 16x16.
+        let weather = transparent_png_wh(64, 256)?;
         for p in ["assets/minecraft/textures/environment/rain.png", "assets/minecraft/textures/environment/snow.png"] {
-            put(&mut files, p.into(), blank.clone());
+            put(&mut files, p.into(), weather.clone());
         }
     }
     if cfg.no_particles {
@@ -1148,6 +1179,12 @@ mod tests {
         assert!(has("assets/minecraft/textures/environment/rain.png"));
         assert!(has("assets/minecraft/textures/particle/explosion_0.png"));
 
+        for name in ["assets/minecraft/textures/environment/rain.png", "assets/minecraft/textures/environment/snow.png"] {
+            let bytes = &files.iter().find(|(n, _)| n == name).unwrap().1;
+            let img = image::load_from_memory(bytes).unwrap();
+            assert_eq!((img.width(), img.height()), (64, 256), "{name} must match vanilla 64x256");
+        }
+
         let dir = std::env::temp_dir().join(format!("sad-fx-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         assert!(write_pack_dir(&dir, &files).unwrap());
@@ -1201,6 +1238,8 @@ mod tests {
         assert_eq!(mc_minor_version("1.20.1-forge-47.4.0"), 20);
         assert_eq!(mc_minor_version("1.18.2"), 18);
         assert_eq!(mc_minor_version("1.21.4"), 21);
+        assert!(mc_minor_version("26.3") >= 19);
+        assert!(mc_minor_version("26.3-forge-66.1.9") >= 19);
 
         let fake_mods = vec![
             InstalledMod {
